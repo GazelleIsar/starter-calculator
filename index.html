@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#111512">
+    <title>起手式｜卡組啟動機率計算器</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="app-header">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">YGO PROBABILITY LAB</p>
+          <h1>起手式 <span>Starter Draw</span></h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="path-status" id="pathStatus">
+          <span class="status-dot"></span>
+          <span id="pathStatusText">尚未綁定資料夾</span>
+        </div>
+        <button class="button button-ghost" id="openSettingsButton" type="button">
+          <span aria-hidden="true">⌘</span> 路徑設定
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace" id="workspace" aria-busy="true">
+      <section class="deck-panel panel" aria-labelledby="deckTitle">
+        <div class="panel-heading">
+          <div>
+            <p class="section-index">01 / DECK</p>
+            <h2 id="deckTitle">主牌組構成</h2>
+          </div>
+          <div class="deck-meta" id="deckMeta" hidden>
+            <span id="deckFileName"></span>
+            <strong id="deckCount">0 張</strong>
+            <span id="uniqueCount">0 種</span>
+          </div>
+        </div>
+
+        <div class="empty-deck" id="emptyDeck">
+          <input id="deckFileInput" type="file" accept=".ydk,text/plain" hidden>
+          <button class="upload-target" id="uploadTarget" type="button">
+            <span class="upload-glyph" aria-hidden="true">＋</span>
+            <span class="upload-copy">
+              <strong>載入你的牌組</strong>
+              <small>拖放 .ydk 檔，或點此選擇</small>
+            </span>
+            <span class="file-chip">YDK</span>
+          </button>
+          <p class="empty-note">只會讀取 <code>#main</code> 與 <code>#extra</code> 之間的卡片密碼。</p>
+        </div>
+
+        <div class="deck-content" id="deckContent" hidden>
+          <div class="deck-toolbar">
+            <p><span class="legend-dot"></span>拖放卡片，或先點卡片再點右側欄位</p>
+            <button class="text-button" id="replaceDeckButton" type="button">更換 .ydk</button>
+          </div>
+          <div class="card-grid-scroll">
+            <div class="card-grid" id="cardGrid" aria-label="主牌組卡片"></div>
+          </div>
+        </div>
+
+        <section class="custom-card-strip" id="customCardStrip" hidden aria-labelledby="customCardTitle">
+          <header class="custom-card-heading">
+            <div>
+              <p class="section-index">CUSTOM / OR</p>
+              <h3 id="customCardTitle">自訂卡片</h3>
+              <small>將多張正式卡合併為一個「任一成立」的可拖曳卡片</small>
+            </div>
+            <button class="button button-secondary" id="addCustomCardButton" type="button">
+              <span aria-hidden="true">＋</span> 新增自訂卡片
+            </button>
+          </header>
+
+          <div class="custom-card-editor" id="customCardEditor" hidden>
+            <div class="custom-editor-topline">
+              <label>
+                <span>名稱</span>
+                <input id="customCardNameInput" type="text" maxlength="30" placeholder="例如：任一初動點">
+              </label>
+              <p><strong id="customDraftCount">0</strong> 種正式卡</p>
+            </div>
+            <div class="custom-member-dropzone" id="customMemberDropzone" role="button" tabindex="0" aria-label="自訂卡片成員欄">
+              <div class="custom-draft-members" id="customDraftMembers"></div>
+            </div>
+            <div class="custom-editor-actions">
+              <small>從上方拖入，或先選卡再點此欄；至少 2 種，抽到任一種即成立。</small>
+              <div>
+                <button class="button button-ghost" id="cancelCustomCardButton" type="button">取消</button>
+                <button class="button button-accent" id="saveCustomCardButton" type="button">建立自訂卡片</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="custom-card-list" id="customCardList" aria-label="自訂卡片列表"></div>
+        </section>
+      </section>
+
+      <aside class="rules-panel panel" aria-labelledby="rulesTitle">
+        <div class="panel-heading rules-heading">
+          <div>
+            <p class="section-index">02 / CARD ROLES</p>
+            <h2 id="rulesTitle">卡位與啟動條件</h2>
+          </div>
+        </div>
+
+        <div class="card-groups" id="cardGroups">
+          <div class="card-groups-heading">
+            <div>
+              <strong>卡位分類</strong>
+              <small>拖放卡片；所有分類與啟動組合皆可重疊</small>
+            </div>
+            <span>不影響啟動率</span>
+          </div>
+
+          <section class="card-group group-floating">
+            <header>
+              <div><i></i><strong>浮動卡位</strong><small>牌組同密碼卡片將變暗</small></div>
+              <span class="group-count" data-group-count="floating">0 張</span>
+            </header>
+            <div class="group-dropzone" data-group="floating" role="button" tabindex="0" aria-label="浮動卡位欄">
+              <div class="group-cards" data-group-cards="floating"></div>
+            </div>
+          </section>
+
+          <section class="card-group group-going-first">
+            <header>
+              <div><i></i><strong>先手阻抗</strong><small>可與其他分類及啟動組合重疊</small></div>
+              <span class="group-count" data-group-count="goingFirst">0 張</span>
+            </header>
+            <div class="group-dropzone" data-group="goingFirst" role="button" tabindex="0" aria-label="先手阻抗欄">
+              <div class="group-cards" data-group-cards="goingFirst"></div>
+            </div>
+          </section>
+
+          <section class="card-group group-going-second">
+            <header>
+              <div><i></i><strong>後手對策</strong><small>可與其他分類及啟動組合重疊</small></div>
+              <span class="group-count" data-group-count="goingSecond">0 張</span>
+            </header>
+            <div class="group-dropzone" data-group="goingSecond" role="button" tabindex="0" aria-label="後手對策欄">
+              <div class="group-cards" data-group-cards="goingSecond"></div>
+            </div>
+          </section>
+
+          <section class="card-group group-brick">
+            <header>
+              <div><i></i><strong>卡組廢件</strong><small>標記不希望在起手抽到的卡片</small></div>
+              <span class="group-count" data-group-count="brick">0 張</span>
+            </header>
+            <div class="group-dropzone" data-group="brick" role="button" tabindex="0" aria-label="卡組廢件欄">
+              <div class="group-cards" data-group-cards="brick"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="combo-section-label">
+          <span>03 / STARTER COMBOS</span>
+          <small>任一組合成立即視為啟動成功</small>
+        </div>
+
+        <div class="rule-explainer">
+          <span><i class="mini-key required-key"></i>上手：每張都必須抽到</span>
+          <span><i class="mini-key forbidden-key"></i>不可上手：任一張出現即失敗</span>
+        </div>
+
+        <div class="combos-list" id="combosList"></div>
+
+        <div class="add-combo-footer">
+          <button class="button button-accent" id="addComboButton" type="button">
+            <span aria-hidden="true">＋</span> 添加啟動組合
+          </button>
+        </div>
+
+        <div class="simulation-card">
+          <div class="simulation-title">
+            <div>
+              <p class="section-index">04 / SIMULATION</p>
+              <h3>蒙地卡羅試抽</h3>
+            </div>
+            <span class="live-badge">LIVE</span>
+          </div>
+          <div class="simulation-inputs">
+            <label>
+              <span>起手張數</span>
+              <input id="handSizeInput" type="number" min="1" value="5" inputmode="numeric">
+              <small>張</small>
+            </label>
+            <label>
+              <span>模擬次數</span>
+              <input id="trialCountInput" type="number" min="1000" max="2000000" step="1000" value="100000" inputmode="numeric">
+              <small>次</small>
+            </label>
+          </div>
+
+          <button class="button button-calculate" id="calculateButton" type="button" disabled>
+            <span class="calculate-label">計算啟動率</span>
+            <span class="calculate-arrow" aria-hidden="true">↗</span>
+          </button>
+
+          <div class="progress-wrap" id="progressWrap" hidden>
+            <div class="progress-track"><span id="progressBar"></span></div>
+            <p id="progressText">正在洗牌與試抽… 0%</p>
+          </div>
+
+          <div class="result-card" id="resultCard" hidden aria-live="polite">
+            <p>模擬啟動率</p>
+            <div class="rate-line"><strong id="resultRate">0.00%</strong><span id="resultFraction">0 / 0</span></div>
+            <div class="result-details">
+              <span>成功 <b id="resultSuccess">0</b></span>
+              <span>失敗 <b id="resultFailure">0</b></span>
+              <span>95% 區間 <b id="resultInterval">—</b></span>
+            </div>
+            <div class="expectation-grid">
+              <article class="expectation-report expectation-first">
+                <div class="expectation-label"><i></i><span>先手抽到阻抗的期望張數</span></div>
+                <strong><span id="resultGoingFirstExpected">0.000</span><small>張</small></strong>
+                <p id="resultGoingFirstDetail">試抽 0 張 · 至少一張 0.00%</p>
+              </article>
+              <article class="expectation-report expectation-second">
+                <div class="expectation-label"><i></i><span>後手抽到對策的期望張數</span></div>
+                <strong><span id="resultGoingSecondExpected">0.000</span><small>張</small></strong>
+                <p id="resultGoingSecondDetail">試抽 0 張 · 至少一張 0.00%</p>
+              </article>
+              <article class="expectation-report expectation-brick">
+                <div class="expectation-label"><i></i><span>卡組廢件至少上手 1 張</span></div>
+                <strong><span id="resultBrickGames">—</span><small>局一次</small></strong>
+                <p id="resultBrickDetail">試抽 0 張 · 至少一張 0.00%</p>
+              </article>
+            </div>
+          </div>
+        </div>
+
+        <div class="game-simulation-card">
+          <div class="simulation-title">
+            <div>
+              <p class="section-index">05 / MATCH SIMULATION</p>
+              <h3>賽局模擬</h3>
+            </div>
+            <span class="live-badge game-badge">GAME</span>
+          </div>
+
+          <fieldset class="game-mode-switch" id="gameModeSwitch">
+            <legend>計算模式</legend>
+            <label>
+              <input type="radio" name="gameMode" value="direct" checked>
+              <span><strong>直接勝率計算</strong><small>依目前設定計算先後手勝率</small></span>
+            </label>
+            <label>
+              <input type="radio" name="gameMode" value="reverse">
+              <span><strong>從目標反推</strong><small>尋找浮動卡位的最佳分配</small></span>
+            </label>
+          </fieldset>
+
+          <p class="reverse-mode-note" id="reverseModeNote" hidden>
+            反推時固定非浮動核心牌，並在指定的浮動卡位數範圍內同時比較牌組張數與配置。為控制計算時間，所有張數合計最多使用約 100,000 次共同試抽。
+          </p>
+
+          <fieldset class="floating-count-range" id="floatingCountRange" hidden>
+            <legend><strong>浮動卡位數範圍</strong><small>連動總牌組張數</small></legend>
+            <div class="floating-range-inputs">
+              <label><span>下限</span><input id="floatingMinInput" type="number" min="0" max="60" value="0" inputmode="numeric"><small>張</small></label>
+              <span aria-hidden="true">～</span>
+              <label><span>上限</span><input id="floatingMaxInput" type="number" min="0" max="60" value="0" inputmode="numeric"><small>張</small></label>
+            </div>
+            <p id="floatingDeckRangeSummary">載入牌組並設定浮動卡位後顯示總牌組範圍。</p>
+          </fieldset>
+
+          <fieldset class="allocation-method-selector" id="allocationMethodSelector" hidden>
+            <legend><strong>允許的浮動卡配置</strong><small><span id="allocationMethodCount">3</span> / 3 項</small></legend>
+            <div>
+              <label><input type="checkbox" name="allocationMethod" value="starter" checked><span>啟動</span></label>
+              <label><input type="checkbox" name="allocationMethod" value="first" checked><span>先手阻抗</span></label>
+              <label><input type="checkbox" name="allocationMethod" value="second" checked><span>後手對策</span></label>
+              <label><input type="checkbox" name="allocationMethod" value="starterFirst"><span>啟動＋先手</span></label>
+              <label><input type="checkbox" name="allocationMethod" value="starterSecond"><span>啟動＋後手</span></label>
+              <label><input type="checkbox" name="allocationMethod" value="firstSecond"><span>後手＋先手</span></label>
+            </div>
+            <p>請選擇 1～3 項；未勾選的配置不會納入最佳化。</p>
+          </fieldset>
+
+          <div class="victory-conditions">
+            <article class="victory-condition victory-first">
+              <header><i></i><strong>先手勝利條件</strong><small>起手 <span id="firstHandSizeLabel">5</span> 張</small></header>
+              <div class="condition-input-grid">
+                <label><span>成立啟動組合</span><input id="firstStarterMinInput" type="number" min="0" value="1" inputmode="numeric"><small>項以上</small></label>
+                <label><span>先手阻抗卡</span><input id="firstRoleMinInput" type="number" min="0" value="1" inputmode="numeric"><small>張以上</small></label>
+              </div>
+            </article>
+            <article class="victory-condition victory-second">
+              <header><i></i><strong>後手勝利條件</strong><small>起手 <span id="secondHandSizeLabel">6</span> 張</small></header>
+              <div class="condition-input-grid">
+                <label><span>成立啟動組合</span><input id="secondStarterMinInput" type="number" min="0" value="1" inputmode="numeric"><small>項以上</small></label>
+                <label><span>後手對策卡</span><input id="secondRoleMinInput" type="number" min="0" value="1" inputmode="numeric"><small>張以上</small></label>
+              </div>
+            </article>
+          </div>
+
+          <button class="button button-game-calculate" id="calculateGameButton" type="button" disabled>
+            <span class="calculate-label">計算賽局勝率</span>
+            <span class="calculate-arrow" aria-hidden="true">↗</span>
+          </button>
+
+          <div class="progress-wrap" id="gameProgressWrap" hidden>
+            <div class="progress-track game-progress-track"><span id="gameProgressBar"></span></div>
+            <p id="gameProgressText">正在進行賽局模擬… 0%</p>
+          </div>
+
+          <div class="game-result-card" id="gameResultCard" hidden aria-live="polite">
+            <p id="gameResultCaption">綜合勝率</p>
+            <div class="game-rate-main"><strong id="gameCombinedRate">0.00%</strong><span id="gameTrialSummary">0 次模擬</span></div>
+            <div class="side-rate-grid">
+              <article><span>先手勝率</span><strong id="gameFirstRate">0.00%</strong><small id="gameFirstFraction">0 / 0</small></article>
+              <article><span>後手勝率</span><strong id="gameSecondRate">0.00%</strong><small id="gameSecondFraction">0 / 0</small></article>
+            </div>
+            <div class="outcome-matrix" aria-label="先後手共同判定結果">
+              <span><b>TT</b><strong id="gameOutcomeTT">0</strong><small>先手勝・後手勝</small></span>
+              <span><b>TF</b><strong id="gameOutcomeTF">0</strong><small>先手勝・後手負</small></span>
+              <span><b>FT</b><strong id="gameOutcomeFT">0</strong><small>先手負・後手勝</small></span>
+              <span><b>FF</b><strong id="gameOutcomeFF">0</strong><small>先手負・後手負</small></span>
+            </div>
+            <div class="allocation-result" id="allocationResult" hidden>
+              <div class="allocation-heading"><strong>最佳浮動卡位分配</strong><small>只比較你勾選的配置</small></div>
+              <div class="allocation-summary">
+                <article><span>最佳總牌組</span><strong><b id="bestDeckSize">—</b><small>張</small></strong></article>
+                <article><span>採用浮動卡位</span><strong><b id="bestFloatingCount">—</b><small>張</small></strong></article>
+              </div>
+              <p class="deck-range-result" id="deckRangeResult"></p>
+              <div class="allocation-list" id="allocationList"></div>
+              <p class="allocation-note" id="allocationNote"></p>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <dialog class="custom-card-details-dialog" id="customCardDetailsDialog" aria-labelledby="customCardDetailsTitle">
+      <section class="custom-details-shell">
+        <header>
+          <div>
+            <p class="section-index">CUSTOM CARD / OR</p>
+            <h2 id="customCardDetailsTitle">自訂卡片</h2>
+            <small id="customCardDetailsCount">0 種正式卡 · 任一成立</small>
+          </div>
+          <button type="button" id="closeCustomCardDetailsButton" aria-label="關閉自訂卡片內容">×</button>
+        </header>
+        <div class="custom-details-grid" id="customCardDetailsGrid"></div>
+        <p class="custom-details-hint">點擊視窗外的空白處，或按 Esc 關閉。</p>
+      </section>
+    </dialog>
+
+    <dialog class="settings-dialog" id="settingsDialog">
+      <form method="dialog" class="settings-shell" id="settingsForm">
+        <div class="dialog-topline"><span></span><span></span><span></span></div>
+        <div class="dialog-heading">
+          <p class="section-index">LOCAL SOURCE</p>
+          <h2>綁定 YGOPro 資料夾</h2>
+          <p>程式只會讀取你選擇的主目錄、牌組與卡圖；設定檔保存在本程式資料夾內。</p>
+        </div>
+
+        <div class="path-field">
+          <div class="path-label">
+            <span class="path-number">01</span>
+            <div><strong>YGOPro 主目錄</strong><small>例如 D:\Games\ygopro2</small></div>
+            <span class="field-state" id="rootFieldState">未設定</span>
+          </div>
+          <div class="path-control">
+            <input id="rootPathInput" type="text" readonly placeholder="尚未選擇資料夾">
+            <button class="button button-secondary" id="pickRootButton" type="button">選擇</button>
+          </div>
+        </div>
+
+        <div class="connector-line" aria-hidden="true"></div>
+
+        <div class="path-field">
+          <div class="path-label">
+            <span class="path-number">02</span>
+            <div><strong>卡圖目錄</strong><small>通常為主目錄內的 pics</small></div>
+            <span class="field-state" id="picsFieldState">未設定</span>
+          </div>
+          <div class="path-control">
+            <input id="picsPathInput" type="text" readonly placeholder="選擇主目錄後會自動偵測">
+            <button class="button button-secondary" id="pickPicsButton" type="button">另選</button>
+          </div>
+        </div>
+
+        <p class="dialog-message" id="settingsMessage" role="status"></p>
+        <div class="dialog-actions">
+          <button class="button button-ghost" id="cancelSettingsButton" value="cancel" type="submit">取消</button>
+          <button class="button button-accent" id="confirmSettingsButton" value="confirm" type="submit" disabled>完成設定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+    <script type="module" src="/assets/app.mjs"></script>
+  </body>
+</html>
