@@ -1053,7 +1053,7 @@ function renderGameResult(result) {
       })
       .join("");
     elements.allocationNote.textContent =
-      `只比較「${result.allocation.map(({ method }) => allocationMethodLabels[method]).join("、")}」；固定 ${result.baseDeckSize} 張非浮動核心，已屏蔽所有包含浮動卡的既有啟動組合與欄位項目，保留 ${result.maskedComboCount} 組完整啟動條件。`;
+      `只比較「${result.allocation.map(({ method }) => allocationMethodLabels[method]).join("、")}」；固定 ${result.baseDeckSize} 張非浮動核心。只有同密碼卡全數移入浮動卡位時才會排除既有條件；部分移入仍保留，現有 ${result.maskedComboCount} 組啟動條件。`;
   }
   elements.gameResultCard.hidden = false;
 }

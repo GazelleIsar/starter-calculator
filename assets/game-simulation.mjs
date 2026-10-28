@@ -95,25 +95,44 @@ export function runGameSimulation({
   return resultFromCounts(firstWins, secondWins, trials, matrix);
 }
 
-function tokenTouchesCodes(token, codes) {
-  return cardTokenMembers(token).some((code) => codes.has(code));
+function tokenWithoutCodes(token, excludedCodes) {
+  if (typeof token === "string") return excludedCodes.has(token) ? null : token;
+  const members = cardTokenMembers(token);
+  const remainingMembers = members.filter((code) => !excludedCodes.has(code));
+  if (remainingMembers.length === 0) return null;
+  if (remainingMembers.length === members.length) return token;
+  return { ...token, members: remainingMembers };
 }
 
-function maskFloatingAssignments(combos, goingFirstCards, goingSecondCards, floatingCodes) {
+function selectionWithoutCodes(cards, excludedCodes) {
+  return cards.map((token) => tokenWithoutCodes(token, excludedCodes)).filter(Boolean);
+}
+
+function maskFloatingAssignments(combos, goingFirstCards, goingSecondCards, fullyFloatingCodes) {
   return {
-    // A combo is an indivisible AND condition. Keeping it after removing one
-    // floating requirement would turn the remainder into an easier, invalid combo.
     combos: combos
-      .filter(
-        (combo) =>
-          ![...combo.required, ...combo.forbidden].some((token) =>
-            tokenTouchesCodes(token, floatingCodes),
-          ),
-      )
-      .map((combo) => ({ required: combo.required.slice(), forbidden: combo.forbidden.slice() })),
-    goingFirstCards: goingFirstCards.filter((token) => !tokenTouchesCodes(token, floatingCodes)),
-    goingSecondCards: goingSecondCards.filter((token) => !tokenTouchesCodes(token, floatingCodes)),
+      .map((combo) => {
+        const required = combo.required.map((token) => tokenWithoutCodes(token, fullyFloatingCodes));
+        // A missing required token invalidates the whole AND combination. Forbidden
+        // tokens can be removed because a fully floating code no longer exists in the core deck.
+        if (required.some((token) => token === null)) return null;
+        return {
+          required,
+          forbidden: combo.forbidden
+            .map((token) => tokenWithoutCodes(token, fullyFloatingCodes))
+            .filter(Boolean),
+        };
+      })
+      .filter(Boolean),
+    goingFirstCards: selectionWithoutCodes(goingFirstCards, fullyFloatingCodes),
+    goingSecondCards: selectionWithoutCodes(goingSecondCards, fullyFloatingCodes),
   };
+}
+
+function cardCounts(cards) {
+  const counts = new Map();
+  for (const code of cards) counts.set(code, (counts.get(code) || 0) + 1);
+  return counts;
 }
 
 const ALLOCATION_METHODS = {
@@ -298,12 +317,12 @@ export function optimizeFloatingAllocation({
     throw new Error(`浮動卡位下限會使牌組少於後手起手所需的 ${handSize + 1} 張。`);
   }
 
-  const masked = maskFloatingAssignments(
-    combos,
-    goingFirstCards,
-    goingSecondCards,
-    new Set(originalFlexCards),
+  const deckCounts = cardCounts(deck);
+  const floatingCounts = cardCounts(originalFlexCards);
+  const fullyFloatingCodes = new Set(
+    [...floatingCounts].filter(([code, count]) => count === deckCounts.get(code)).map(([code]) => code),
   );
+  const masked = maskFloatingAssignments(combos, goingFirstCards, goingSecondCards, fullyFloatingCodes);
   const compiled = compileCombos(masked.combos);
   const taggedBaseDeck = tagDeck(baseDeck, masked.goingFirstCards, masked.goingSecondCards);
   const rangeCount = maxCount - minCount + 1;

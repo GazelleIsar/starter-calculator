@@ -317,7 +317,7 @@ test("reverse optimizer masks floating assignments and only uses selected alloca
   assert.deepEqual(result.allocation, [{ method: "starterSecond", cards: ["1"] }]);
 });
 
-test("reverse optimizer drops whole starter combos that touch floating custom OR members", () => {
+test("reverse optimizer drops whole starter combos when every custom OR member is fully floating", () => {
   const custom = { type: "custom", id: "engine", name: "任一引擎", members: ["1", "2"] };
   const result = optimizeFloatingAllocation({
     deck: ["3", "1", "2", "4"],
@@ -327,7 +327,7 @@ test("reverse optimizer drops whole starter combos that touch floating custom OR
     ],
     handSize: 1,
     trials: 1,
-    floatingCards: ["1"],
+    floatingCards: [custom],
     allocationMethods: ["second"],
     firstStarterMin: 2,
     firstRoleMin: 0,
@@ -340,7 +340,27 @@ test("reverse optimizer drops whole starter combos that touch floating custom OR
   assert.equal(result.secondRate, 0);
 });
 
-test("reverse optimizer drops a whole combo when its forbidden cards touch floating slots", () => {
+test("reverse optimizer keeps custom OR starter combos when a floating code has core copies left", () => {
+  const custom = { type: "custom", id: "engine", name: "任一引擎", members: ["1", "2"] };
+  const result = optimizeFloatingAllocation({
+    deck: ["1", "1", "3"],
+    combos: [{ required: [custom], forbidden: [] }],
+    handSize: 1,
+    trials: 1,
+    floatingCards: ["1"],
+    allocationMethods: ["second"],
+    firstStarterMin: 1,
+    firstRoleMin: 0,
+    secondStarterMin: 1,
+    secondRoleMin: 0,
+    random: () => 0,
+  });
+  assert.equal(result.maskedComboCount, 1);
+  assert.equal(result.firstRate, 1);
+  assert.equal(result.secondRate, 1);
+});
+
+test("reverse optimizer removes fully floating forbidden cards without dropping the combo", () => {
   const result = optimizeFloatingAllocation({
     deck: ["3", "1", "2"],
     combos: [{ required: ["3"], forbidden: ["1"] }],
@@ -354,9 +374,9 @@ test("reverse optimizer drops a whole combo when its forbidden cards touch float
     secondRoleMin: 0,
     random: () => 0,
   });
-  assert.equal(result.maskedComboCount, 0);
-  assert.equal(result.firstRate, 0);
-  assert.equal(result.secondRate, 0);
+  assert.equal(result.maskedComboCount, 1);
+  assert.equal(result.firstRate, 1);
+  assert.equal(result.secondRate, 1);
 });
 
 test("reverse optimizer supports up to three choices across all six allocation methods", () => {
