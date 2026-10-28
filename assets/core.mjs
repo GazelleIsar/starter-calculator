@@ -88,6 +88,10 @@ function compileCardToken(value, path = new Set()) {
     members,
     target,
     triggerZone: value.triggerZone === "grave" ? "grave" : "hand",
+    triggerCount: Math.min(
+      60,
+      Math.max(1, Number.isInteger(Number(value.triggerCount)) ? Number(value.triggerCount) : 1),
+    ),
     amount: Math.max(1, Number.isInteger(Number(value.amount)) ? Number(value.amount) : 1),
     scope: ["first", "second", "both"].includes(value.scope) ? value.scope : "both",
   };
@@ -202,7 +206,7 @@ function codeOf(card) {
 export function resolveSpecialEffects(deckOrder, baseHandSize, compiledEffects = [], side = "first") {
   const hand = deckOrder.slice(0, baseHandSize);
   const grave = [];
-  const activated = new Set();
+  const activationCounts = new Map();
   let cursor = hand.length;
   let foundNewEffect = true;
 
@@ -211,10 +215,16 @@ export function resolveSpecialEffects(deckOrder, baseHandSize, compiledEffects =
     for (let index = 0; index < compiledEffects.length; index += 1) {
       const effect = compiledEffects[index];
       const key = effect.id || `effect-${index}`;
-      if (activated.has(key) || !scopeAllows(effect.scope, side)) continue;
+      const activationCount = activationCounts.get(key) || 0;
+      if (activationCount >= effect.triggerCount || !scopeAllows(effect.scope, side)) continue;
       const triggerCards = effect.triggerZone === "grave" ? grave : hand;
+      const exposedTargets = triggerCards.reduce(
+        (total, card) => total + Number(codeOf(card) === effect.target.code),
+        0,
+      );
+      if (activationCount >= exposedTargets) continue;
       if (!tokenMatches(triggerCards.map(codeOf), effect)) continue;
-      activated.add(key);
+      activationCounts.set(key, activationCount + 1);
       foundNewEffect = true;
       const count = Math.min(effect.amount, deckOrder.length - cursor);
       const cards = deckOrder.slice(cursor, cursor + count);
@@ -224,7 +234,8 @@ export function resolveSpecialEffects(deckOrder, baseHandSize, compiledEffects =
     }
   }
 
-  return { hand, grave, consumed: cursor, activated: activated.size };
+  const activated = [...activationCounts.values()].reduce((total, count) => total + count, 0);
+  return { hand, grave, consumed: cursor, activated };
 }
 
 export function compileCardSelection(cards) {

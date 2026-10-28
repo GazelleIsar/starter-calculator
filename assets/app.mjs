@@ -45,6 +45,7 @@ const elements = {
   customEffectTargetDropzone: document.querySelector("#customEffectTargetDropzone"),
   customEffectTarget: document.querySelector("#customEffectTarget"),
   customEffectAmountInput: document.querySelector("#customEffectAmountInput"),
+  customEffectTriggerCountInput: document.querySelector("#customEffectTriggerCountInput"),
   customEffectScopeInput: document.querySelector("#customEffectScopeInput"),
   customEffectTriggerZoneInput: document.querySelector("#customEffectTriggerZoneInput"),
   customDraftCount: document.querySelector("#customDraftCount"),
@@ -216,6 +217,7 @@ function cloneCardToken(token) {
   if (["draw", "mill"].includes(clone.kind)) {
     clone.target = typeof token.target === "string" ? token.target : "";
     clone.amount = Math.max(1, Number(token.amount) || 1);
+    clone.triggerCount = Math.min(60, Math.max(1, Number(token.triggerCount) || 1));
     clone.scope = ["first", "second", "both"].includes(token.scope) ? token.scope : "both";
     clone.triggerZone = token.triggerZone === "grave" ? "grave" : "hand";
   }
@@ -455,6 +457,7 @@ function restoreCustomCards() {
       if (isEffect) {
         restoredCard.target = card.target;
         restoredCard.amount = Math.min(60, Math.max(1, Number(card.amount) || 1));
+        restoredCard.triggerCount = Math.min(60, Math.max(1, Number(card.triggerCount) || 1));
         restoredCard.scope = ["first", "second", "both"].includes(card.scope) ? card.scope : "both";
         restoredCard.triggerZone = card.triggerZone === "grave" ? "grave" : "hand";
       }
@@ -647,7 +650,7 @@ function customCardDescription(card) {
   const kind = customCardKind(card);
   if (["draw", "mill"].includes(kind)) {
     const action = kind === "draw" ? "抽牌" : "堆墓／除外";
-    return `改寫 ${card.target || "未設定"} · ${customTriggerZoneLabel(card.triggerZone)} · ${card.members.length} 項附加條件 · ${action} ${card.amount} 張 · ${customScopeLabel(card.scope)}`;
+    return `改寫 ${card.target || "未設定"} · ${customTriggerZoneLabel(card.triggerZone)} · 最多 ${card.triggerCount || 1} 次 · ${card.members.length} 項附加條件 · ${action} ${card.amount} 張 · ${customScopeLabel(card.scope)}`;
   }
   return `${customKindMeta[kind].label} · ${card.members.length} 個條件`;
 }
@@ -766,6 +769,7 @@ function openCustomCardEditor() {
   elements.customCardNameInput.value = "";
   elements.customCardKindInput.value = "or";
   elements.customEffectAmountInput.value = "1";
+  elements.customEffectTriggerCountInput.value = "1";
   elements.customEffectScopeInput.value = "both";
   elements.customEffectTriggerZoneInput.value = "hand";
   elements.customCardEditor.hidden = false;
@@ -833,8 +837,13 @@ function saveCustomCard() {
     return;
   }
   const amount = Number(elements.customEffectAmountInput.value);
+  const triggerCount = Number(elements.customEffectTriggerCountInput.value);
   if (isEffect && (!Number.isInteger(amount) || amount < 1 || amount > 60)) {
     showToast("額外處理張數需介於 1 到 60。", "warning");
+    return;
+  }
+  if (isEffect && (!Number.isInteger(triggerCount) || triggerCount < 1 || triggerCount > 60)) {
+    showToast("觸發次數需介於 1 到 60。", "warning");
     return;
   }
   const fallbackName = `自訂卡片 ${state.customCards.length + 1}`;
@@ -849,6 +858,7 @@ function saveCustomCard() {
   if (isEffect) {
     card.target = state.customDraftTarget;
     card.amount = amount;
+    card.triggerCount = triggerCount;
     card.scope = elements.customEffectScopeInput.value;
     card.triggerZone = elements.customEffectTriggerZoneInput.value === "grave" ? "grave" : "hand";
   }

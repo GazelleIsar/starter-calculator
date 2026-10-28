@@ -722,6 +722,10 @@ h1 span {
   grid-column: 1 / -1;
 }
 
+.custom-effect-fields .custom-effect-scope-field {
+  grid-column: 1 / -1;
+}
+
 .custom-effect-target-field {
   display: grid;
   grid-column: 1 / -1;

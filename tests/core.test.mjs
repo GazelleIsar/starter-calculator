@@ -229,6 +229,63 @@ test("public cards chain immediately across hand and grave trigger zones", () =>
   assert.equal(result.success, 1);
 });
 
+test("the trigger-count limit prevents two public copies from over-resolving", () => {
+  const drawCard = {
+    type: "custom",
+    id: "once-per-turn",
+    name: "一回合一次抽牌",
+    kind: "draw",
+    target: "1",
+    members: [],
+    amount: 1,
+    scope: "both",
+    triggerZone: "hand",
+    triggerCount: 1,
+  };
+  const limited = runMonteCarlo({
+    deck: ["1", "1", "2", "3"],
+    combos: [{ required: ["3"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  const allowedTwice = runMonteCarlo({
+    deck: ["1", "1", "2", "3"],
+    combos: [{ required: ["3"], forbidden: [] }],
+    activeEffects: [{ ...drawCard, triggerCount: 2 }],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(limited.success, 0);
+  assert.equal(allowedTwice.success, 1);
+});
+
+test("one public copy cannot trigger twice even when the configured limit is higher", () => {
+  const drawCard = {
+    type: "custom",
+    id: "one-copy-twice-limit",
+    name: "單卡不可重複公開",
+    kind: "draw",
+    target: "1",
+    members: [],
+    amount: 1,
+    scope: "both",
+    triggerZone: "hand",
+    triggerCount: 2,
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3"],
+    combos: [{ required: ["3"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 1,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 0);
+});
+
 test("a special effect can use an AND custom card as its hand trigger", () => {
   const andTrigger = {
     type: "custom",
