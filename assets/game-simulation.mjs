@@ -101,12 +101,16 @@ function tokenTouchesCodes(token, codes) {
 
 function maskFloatingAssignments(combos, goingFirstCards, goingSecondCards, floatingCodes) {
   return {
+    // A combo is an indivisible AND condition. Keeping it after removing one
+    // floating requirement would turn the remainder into an easier, invalid combo.
     combos: combos
-      .map((combo) => ({
-        required: combo.required.filter((token) => !tokenTouchesCodes(token, floatingCodes)),
-        forbidden: combo.forbidden.filter((token) => !tokenTouchesCodes(token, floatingCodes)),
-      }))
-      .filter((combo) => combo.required.length > 0),
+      .filter(
+        (combo) =>
+          ![...combo.required, ...combo.forbidden].some((token) =>
+            tokenTouchesCodes(token, floatingCodes),
+          ),
+      )
+      .map((combo) => ({ required: combo.required.slice(), forbidden: combo.forbidden.slice() })),
     goingFirstCards: goingFirstCards.filter((token) => !tokenTouchesCodes(token, floatingCodes)),
     goingSecondCards: goingSecondCards.filter((token) => !tokenTouchesCodes(token, floatingCodes)),
   };

@@ -317,6 +317,48 @@ test("reverse optimizer masks floating assignments and only uses selected alloca
   assert.deepEqual(result.allocation, [{ method: "starterSecond", cards: ["1"] }]);
 });
 
+test("reverse optimizer drops whole starter combos that touch floating custom OR members", () => {
+  const custom = { type: "custom", id: "engine", name: "任一引擎", members: ["1", "2"] };
+  const result = optimizeFloatingAllocation({
+    deck: ["3", "1", "2", "4"],
+    combos: [
+      { required: [custom, "3"], forbidden: [] },
+      { required: [custom, "3"], forbidden: [] },
+    ],
+    handSize: 1,
+    trials: 1,
+    floatingCards: ["1"],
+    allocationMethods: ["second"],
+    firstStarterMin: 2,
+    firstRoleMin: 0,
+    secondStarterMin: 2,
+    secondRoleMin: 0,
+    random: () => 0,
+  });
+  assert.equal(result.maskedComboCount, 0);
+  assert.equal(result.firstRate, 0);
+  assert.equal(result.secondRate, 0);
+});
+
+test("reverse optimizer drops a whole combo when its forbidden cards touch floating slots", () => {
+  const result = optimizeFloatingAllocation({
+    deck: ["3", "1", "2"],
+    combos: [{ required: ["3"], forbidden: ["1"] }],
+    handSize: 1,
+    trials: 1,
+    floatingCards: ["1"],
+    allocationMethods: ["second"],
+    firstStarterMin: 1,
+    firstRoleMin: 0,
+    secondStarterMin: 1,
+    secondRoleMin: 0,
+    random: () => 0,
+  });
+  assert.equal(result.maskedComboCount, 0);
+  assert.equal(result.firstRate, 0);
+  assert.equal(result.secondRate, 0);
+});
+
 test("reverse optimizer supports up to three choices across all six allocation methods", () => {
   const result = optimizeFloatingAllocation({
     deck: ["1", "2", "3"],
