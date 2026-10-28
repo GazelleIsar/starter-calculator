@@ -1,8 +1,10 @@
 import {
-  cardTokenMembers,
   compileCardSelection,
   compileCombos,
+  compileSpecialEffects,
   countSuccessfulCombos,
+  customCardKind,
+  resolveSpecialEffects,
   takeCardSelection,
 } from "./core.mjs";
 
@@ -22,13 +24,13 @@ function tagDeck(deck, goingFirstCards, goingSecondCards, floatingCards = []) {
   });
 }
 
-function drawPrefix(taggedDeck, drawCount, random) {
+function shuffleDeck(taggedDeck, random) {
   const pool = taggedDeck.slice();
-  for (let index = 0; index < drawCount; index += 1) {
+  for (let index = 0; index < pool.length; index += 1) {
     const choice = index + Math.floor(random() * (pool.length - index));
     [pool[index], pool[choice]] = [pool[choice], pool[index]];
   }
-  return pool.slice(0, drawCount);
+  return pool;
 }
 
 function emptyMatrix() {
@@ -57,6 +59,8 @@ function resultFromCounts(firstWins, secondWins, trials, matrix) {
 export function runGameSimulation({
   deck,
   combos,
+  customCards = [],
+  activeEffects,
   handSize,
   trials,
   goingFirstCards = [],
@@ -69,6 +73,7 @@ export function runGameSimulation({
   onProgress,
 }) {
   const compiled = compileCombos(combos);
+  const effects = compileSpecialEffects(activeEffects ?? customCards);
   const taggedDeck = tagDeck(deck, goingFirstCards, goingSecondCards);
   const progressEvery = Math.max(1000, Math.floor(trials / 100));
   let firstWins = 0;
@@ -76,14 +81,17 @@ export function runGameSimulation({
   const matrix = emptyMatrix();
 
   for (let trial = 0; trial < trials; trial += 1) {
-    const drawn = drawPrefix(taggedDeck, handSize + 1, random);
-    const firstDrawn = drawn.slice(0, handSize);
-    const firstHand = firstDrawn.map((card) => card.code);
-    const secondHand = drawn.map((card) => card.code);
-    const firstComboCount = countSuccessfulCombos(firstHand, compiled, true);
-    const secondComboCount = countSuccessfulCombos(secondHand, compiled, true);
-    const firstRoleCount = firstDrawn.reduce((total, card) => total + Number(card.goingFirst), 0);
-    const secondRoleCount = drawn.reduce((total, card) => total + Number(card.goingSecond), 0);
+    const shuffled = shuffleDeck(taggedDeck, random);
+    const firstZones = resolveSpecialEffects(shuffled, handSize, effects, "first");
+    const secondZones = resolveSpecialEffects(shuffled, handSize + 1, effects, "second");
+    const firstHand = firstZones.hand.map((card) => card.code);
+    const secondHand = secondZones.hand.map((card) => card.code);
+    const firstGrave = firstZones.grave.map((card) => card.code);
+    const secondGrave = secondZones.grave.map((card) => card.code);
+    const firstComboCount = countSuccessfulCombos(firstHand, compiled, true, firstGrave);
+    const secondComboCount = countSuccessfulCombos(secondHand, compiled, true, secondGrave);
+    const firstRoleCount = firstZones.hand.reduce((total, card) => total + Number(card.goingFirst), 0);
+    const secondRoleCount = secondZones.hand.reduce((total, card) => total + Number(card.goingSecond), 0);
     const firstWin = firstComboCount >= firstStarterMin && firstRoleCount >= firstRoleMin;
     const secondWin = secondComboCount >= secondStarterMin && secondRoleCount >= secondRoleMin;
     if (firstWin) firstWins += 1;
@@ -97,10 +105,11 @@ export function runGameSimulation({
 
 function tokenWithoutCodes(token, excludedCodes) {
   if (typeof token === "string") return excludedCodes.has(token) ? null : token;
-  const members = cardTokenMembers(token);
-  const remainingMembers = members.filter((code) => !excludedCodes.has(code));
+  const members = token.members.map((member) => tokenWithoutCodes(member, excludedCodes));
+  if (customCardKind(token) === "and" && members.some((member) => member === null)) return null;
+  const remainingMembers = members.filter(Boolean);
   if (remainingMembers.length === 0) return null;
-  if (remainingMembers.length === members.length) return token;
+  if (remainingMembers.length === token.members.length) return token;
   return { ...token, members: remainingMembers };
 }
 
@@ -112,6 +121,13 @@ function maskFloatingAssignments(combos, goingFirstCards, goingSecondCards, full
   return {
     combos: combos
       .map((combo) => {
+        if (combo.kind === "grave") {
+          const graveRequired = combo.graveRequired.map((token) =>
+            tokenWithoutCodes(token, fullyFloatingCodes),
+          );
+          if (graveRequired.some((token) => token === null)) return null;
+          return { ...combo, graveRequired };
+        }
         const required = combo.required.map((token) => tokenWithoutCodes(token, fullyFloatingCodes));
         // A missing required token invalidates the whole AND combination. Forbidden
         // tokens can be removed because a fully floating code no longer exists in the core deck.
@@ -156,6 +172,7 @@ function allocationVectors(total, partCount, prefix = []) {
 function optimizeFixedFloatingCount({
   taggedBaseDeck,
   compiled,
+  compiledEffects,
   flexLabels,
   selectedMethods,
   methodMasks,
@@ -191,19 +208,40 @@ function optimizeFixedFloatingCount({
   for (let trial = 0; trial < trials; trial += 1) {
     firstFlags.fill(0);
     secondFlags.fill(0);
-    const drawn = drawPrefix(taggedDeck, handSize + 1, random);
-    const firstDrawn = drawn.slice(0, handSize);
-    const firstHand = firstDrawn.map((card) => card.code);
-    const secondHand = drawn.map((card) => card.code);
-    firstBaseCombos[trial] = countSuccessfulCombos(firstHand, compiled, true);
-    secondBaseCombos[trial] = countSuccessfulCombos(secondHand, compiled, true);
-    firstBaseRoles[trial] = firstDrawn.reduce((total, card) => total + Number(card.goingFirst), 0);
-    secondBaseRoles[trial] = drawn.reduce((total, card) => total + Number(card.goingSecond), 0);
-    for (let index = 0; index < drawn.length; index += 1) {
-      const flexIndex = drawn[index].flexIndex;
+    const shuffled = shuffleDeck(taggedDeck, random);
+    const firstZones = resolveSpecialEffects(shuffled, handSize, compiledEffects, "first");
+    const secondZones = resolveSpecialEffects(shuffled, handSize + 1, compiledEffects, "second");
+    const firstHand = firstZones.hand.map((card) => card.code);
+    const secondHand = secondZones.hand.map((card) => card.code);
+    firstBaseCombos[trial] = countSuccessfulCombos(
+      firstHand,
+      compiled,
+      true,
+      firstZones.grave.map((card) => card.code),
+    );
+    secondBaseCombos[trial] = countSuccessfulCombos(
+      secondHand,
+      compiled,
+      true,
+      secondZones.grave.map((card) => card.code),
+    );
+    firstBaseRoles[trial] = firstZones.hand.reduce(
+      (total, card) => total + Number(card.goingFirst),
+      0,
+    );
+    secondBaseRoles[trial] = secondZones.hand.reduce(
+      (total, card) => total + Number(card.goingSecond),
+      0,
+    );
+    for (const card of firstZones.hand) {
+      const flexIndex = card.flexIndex;
+      if (flexIndex < 0) continue;
+      firstFlags[flexIndex] = 1;
+    }
+    for (const card of secondZones.hand) {
+      const flexIndex = card.flexIndex;
       if (flexIndex < 0) continue;
       secondFlags[flexIndex] = 1;
-      if (index < handSize) firstFlags[flexIndex] = 1;
     }
     const offset = trial * stride;
     for (let slot = 0; slot < flexCount; slot += 1) {
@@ -277,6 +315,8 @@ function optimizeFixedFloatingCount({
 export function optimizeFloatingAllocation({
   deck,
   combos,
+  customCards = [],
+  activeEffects,
   handSize,
   trials,
   goingFirstCards = [],
@@ -324,11 +364,13 @@ export function optimizeFloatingAllocation({
   );
   const masked = maskFloatingAssignments(combos, goingFirstCards, goingSecondCards, fullyFloatingCodes);
   const compiled = compileCombos(masked.combos);
+  const compiledEffects = compileSpecialEffects(activeEffects ?? customCards);
   const taggedBaseDeck = tagDeck(baseDeck, masked.goingFirstCards, masked.goingSecondCards);
   const rangeCount = maxCount - minCount + 1;
   const perSizeTrialCap = Math.max(1000, Math.floor(maxTrials / rangeCount));
   const usedTrials = Math.min(trials, perSizeTrialCap);
-  const sharedRandomValues = new Float64Array(usedTrials * (handSize + 1));
+  const maximumDeckSize = baseDeck.length + maxCount;
+  const sharedRandomValues = new Float32Array(usedTrials * maximumDeckSize);
   for (let index = 0; index < sharedRandomValues.length; index += 1) {
     sharedRandomValues[index] = random();
   }
@@ -345,6 +387,7 @@ export function optimizeFloatingAllocation({
     const fixed = optimizeFixedFloatingCount({
       taggedBaseDeck,
       compiled,
+      compiledEffects,
       flexLabels,
       selectedMethods,
       methodMasks,

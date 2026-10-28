@@ -2,6 +2,7 @@ import {
   cardTokenMembers,
   compileCardSelection,
   countUnique,
+  customCardKind,
   isCustomCardToken,
   parseYdk,
   simpleDeckHash,
@@ -39,18 +40,28 @@ const elements = {
   addCustomCardButton: document.querySelector("#addCustomCardButton"),
   customCardEditor: document.querySelector("#customCardEditor"),
   customCardNameInput: document.querySelector("#customCardNameInput"),
+  customCardKindInput: document.querySelector("#customCardKindInput"),
+  customEffectFields: document.querySelector("#customEffectFields"),
+  customEffectTargetDropzone: document.querySelector("#customEffectTargetDropzone"),
+  customEffectTarget: document.querySelector("#customEffectTarget"),
+  customEffectAmountInput: document.querySelector("#customEffectAmountInput"),
+  customEffectScopeInput: document.querySelector("#customEffectScopeInput"),
+  customEffectTriggerZoneInput: document.querySelector("#customEffectTriggerZoneInput"),
   customDraftCount: document.querySelector("#customDraftCount"),
+  customMemberHint: document.querySelector("#customMemberHint"),
   customMemberDropzone: document.querySelector("#customMemberDropzone"),
   customDraftMembers: document.querySelector("#customDraftMembers"),
   cancelCustomCardButton: document.querySelector("#cancelCustomCardButton"),
   saveCustomCardButton: document.querySelector("#saveCustomCardButton"),
   customCardDetailsDialog: document.querySelector("#customCardDetailsDialog"),
   customCardDetailsTitle: document.querySelector("#customCardDetailsTitle"),
+  customCardDetailsKind: document.querySelector("#customCardDetailsKind"),
   customCardDetailsCount: document.querySelector("#customCardDetailsCount"),
   customCardDetailsGrid: document.querySelector("#customCardDetailsGrid"),
   closeCustomCardDetailsButton: document.querySelector("#closeCustomCardDetailsButton"),
   cardGroups: document.querySelector("#cardGroups"),
   addComboButton: document.querySelector("#addComboButton"),
+  addGraveComboButton: document.querySelector("#addGraveComboButton"),
   combosList: document.querySelector("#combosList"),
   handSizeInput: document.querySelector("#handSizeInput"),
   trialCountInput: document.querySelector("#trialCountInput"),
@@ -117,8 +128,9 @@ const state = {
   deckKey: "",
   customCards: [],
   customDraftMembers: [],
+  customDraftTarget: null,
   combos: [],
-  cardGroups: { floating: [], goingFirst: [], goingSecond: [], brick: [] },
+  cardGroups: { judgment: [], floating: [], goingFirst: [], goingSecond: [], brick: [] },
   nextComboId: 1,
   worker: null,
   gameWorker: null,
@@ -165,14 +177,49 @@ function customCardById(id) {
   return state.customCards.find((card) => card.id === id) || null;
 }
 
+const customKindMeta = {
+  or: { short: "OR", label: "任一成立" },
+  and: { short: "AND", label: "全部成立" },
+  draw: { short: "DRAW", label: "特殊判定－抽牌" },
+  mill: { short: "MILL", label: "特殊判定－堆墓或除外" },
+};
+
+function customScopeLabel(scope) {
+  return { first: "僅先手", second: "僅後手", both: "先手及後手" }[scope] || "先手及後手";
+}
+
+function customTriggerZoneLabel(triggerZone) {
+  return triggerZone === "grave" ? "墓地／除外觸發" : "手牌觸發";
+}
+
+function isSpecialEffectCard(token) {
+  return isCustomCardToken(token) && ["draw", "mill"].includes(customCardKind(token));
+}
+
+function isConfiguredEffectCard(token) {
+  return Boolean(
+    isSpecialEffectCard(token) &&
+      typeof token.target === "string" &&
+      state.deck.includes(token.target),
+  );
+}
+
 function cloneCardToken(token) {
   if (typeof token === "string") return token;
-  return {
+  const clone = {
     type: "custom",
     id: token.id,
     name: token.name,
-    members: token.members.slice(),
+    kind: customCardKind(token),
+    members: token.members.map(cloneCardToken),
   };
+  if (["draw", "mill"].includes(clone.kind)) {
+    clone.target = typeof token.target === "string" ? token.target : "";
+    clone.amount = Math.max(1, Number(token.amount) || 1);
+    clone.scope = ["first", "second", "both"].includes(token.scope) ? token.scope : "both";
+    clone.triggerZone = token.triggerZone === "grave" ? "grave" : "hand";
+  }
+  return clone;
 }
 
 function normalizeCardToken(token) {
@@ -184,6 +231,10 @@ function normalizeCardToken(token) {
 
 function cardTokenLabel(token) {
   return typeof token === "string" ? token : token.name || "自訂卡片";
+}
+
+function cardTokenKey(token) {
+  return typeof token === "string" ? `card:${token}` : `custom:${token.id}`;
 }
 
 function draggedCardToken(dataTransfer) {
@@ -364,24 +415,52 @@ function saveCustomCards() {
 function restoreCustomCards() {
   state.customCards = [];
   state.customDraftMembers = [];
+  state.customDraftTarget = null;
   const key = customCardStorageKey();
   if (!key) return;
   try {
     const saved = JSON.parse(localStorage.getItem(key) || "[]");
     if (!Array.isArray(saved)) return;
     const ids = new Set();
-    state.customCards = saved.flatMap((card, index) => {
-      if (!isCustomCardToken(card) || ids.has(card.id)) return [];
-      const members = [...new Set(card.members.filter((code) => /^\d+$/.test(code) && state.deck.includes(code)))];
-      if (members.length < 2) return [];
+    const restored = [];
+    for (let index = 0; index < saved.length; index += 1) {
+      const card = saved[index];
+      if (!isCustomCardToken(card) || ids.has(card.id)) continue;
+      const kind = customCardKind(card);
+      const isEffect = ["draw", "mill"].includes(kind);
+      if (isEffect && (typeof card.target !== "string" || !state.deck.includes(card.target))) continue;
+      const seenMembers = new Set();
+      const members = card.members.flatMap((member) => {
+        let normalized = null;
+        if (typeof member === "string" && /^\d+$/.test(member) && state.deck.includes(member)) {
+          normalized = member;
+        } else if (isCustomCardToken(member)) {
+          const dependency = restored.find((item) => item.id === member.id);
+          if (dependency && !isSpecialEffectCard(dependency)) normalized = cloneCardToken(dependency);
+        }
+        if (!normalized || seenMembers.has(cardTokenKey(normalized))) return [];
+        seenMembers.add(cardTokenKey(normalized));
+        return [normalized];
+      });
+      const minimum = isEffect ? 0 : 2;
+      if (members.length < minimum) continue;
       ids.add(card.id);
-      return [{
+      const restoredCard = {
         type: "custom",
         id: card.id,
         name: String(card.name || `自訂卡片 ${index + 1}`).trim().slice(0, 30) || `自訂卡片 ${index + 1}`,
+        kind,
         members,
-      }];
-    });
+      };
+      if (isEffect) {
+        restoredCard.target = card.target;
+        restoredCard.amount = Math.min(60, Math.max(1, Number(card.amount) || 1));
+        restoredCard.scope = ["first", "second", "both"].includes(card.scope) ? card.scope : "both";
+        restoredCard.triggerZone = card.triggerZone === "grave" ? "grave" : "hand";
+      }
+      restored.push(restoredCard);
+    }
+    state.customCards = restored;
   } catch {
     state.customCards = [];
   }
@@ -405,13 +484,23 @@ function restoreCombos() {
   try {
     const saved = JSON.parse(localStorage.getItem(key) || "[]");
     if (!Array.isArray(saved)) return;
-    state.combos = saved
-      .filter((combo) => combo && Array.isArray(combo.required) && Array.isArray(combo.forbidden))
-      .map((combo) => ({
+    state.combos = saved.flatMap((combo) => {
+      if (combo?.kind === "grave") {
+        if (!Array.isArray(combo.graveRequired)) return [];
+        return [{
+          id: state.nextComboId++,
+          kind: "grave",
+          graveRequired: combo.graveRequired.map(normalizeCardToken).filter(Boolean),
+        }];
+      }
+      if (!combo || !Array.isArray(combo.required) || !Array.isArray(combo.forbidden)) return [];
+      return [{
         id: state.nextComboId++,
+        kind: "hand",
         required: combo.required.map(normalizeCardToken).filter(Boolean),
         forbidden: combo.forbidden.map(normalizeCardToken).filter(Boolean),
-      }));
+      }];
+    });
   } catch {
     state.combos = [];
   }
@@ -426,6 +515,7 @@ function trimCardsToDeckCopies(cards) {
     const token = normalizeCardToken(rawToken);
     if (!token) return [];
     if (isCustomCardToken(token)) {
+      if (isSpecialEffectCard(token)) return [];
       if (usedCustomCards.has(token.id)) return [];
       usedCustomCards.add(token.id);
       return [token];
@@ -448,7 +538,7 @@ function saveCardGroups() {
 }
 
 function restoreCardGroups() {
-  state.cardGroups = { floating: [], goingFirst: [], goingSecond: [], brick: [] };
+  state.cardGroups = { judgment: [], floating: [], goingFirst: [], goingSecond: [], brick: [] };
   const key = cardGroupStorageKey();
   if (!key) return;
   try {
@@ -456,8 +546,17 @@ function restoreCardGroups() {
     for (const group of ["floating", "goingFirst", "goingSecond", "brick"]) {
       if (Array.isArray(saved[group])) state.cardGroups[group] = trimCardsToDeckCopies(saved[group]);
     }
+    if (Array.isArray(saved.judgment)) {
+      const seen = new Set();
+      state.cardGroups.judgment = saved.judgment.flatMap((rawToken) => {
+        const token = normalizeCardToken(rawToken);
+        if (!isConfiguredEffectCard(token) || seen.has(token.id)) return [];
+        seen.add(token.id);
+        return [token];
+      });
+    }
   } catch {
-    state.cardGroups = { floating: [], goingFirst: [], goingSecond: [], brick: [] };
+    state.cardGroups = { judgment: [], floating: [], goingFirst: [], goingSecond: [], brick: [] };
   }
 }
 
@@ -491,6 +590,7 @@ function renderDeck() {
   elements.customCardStrip.hidden = !hasDeck;
   elements.deckMeta.hidden = !hasDeck;
   elements.addComboButton.disabled = !hasDeck;
+  elements.addGraveComboButton.disabled = !hasDeck;
   elements.cardGrid.replaceChildren();
 
   if (!hasDeck) {
@@ -531,43 +631,86 @@ function renderDeck() {
 }
 
 function customStackMarkup(card) {
-  const images = card.members
+  const physicalCodes = cardTokenMembers(card);
+  const images = physicalCodes
     .slice(0, 3)
     .map((code) => `<img src="${cardImageUrl(code)}" alt="卡片 ${code}" draggable="false">`)
     .join("");
-  return `${images}<span class="custom-or-badge">OR ${card.members.length}</span>`;
+  const kind = customCardKind(card);
+  const badge = ["draw", "mill"].includes(kind)
+    ? `${customKindMeta[kind].short} ${card.amount}`
+    : `${customKindMeta[kind].short} ${card.members.length}`;
+  return `${images}<span class="custom-or-badge">${badge}</span>`;
+}
+
+function customCardDescription(card) {
+  const kind = customCardKind(card);
+  if (["draw", "mill"].includes(kind)) {
+    const action = kind === "draw" ? "抽牌" : "堆墓／除外";
+    return `改寫 ${card.target || "未設定"} · ${customTriggerZoneLabel(card.triggerZone)} · ${card.members.length} 項附加條件 · ${action} ${card.amount} 張 · ${customScopeLabel(card.scope)}`;
+  }
+  return `${customKindMeta[kind].label} · ${card.members.length} 個條件`;
+}
+
+function draftTokenMarkup(token, index) {
+  if (typeof token === "string") {
+    return `
+      <article class="custom-draft-card" title="${token}">
+        <div class="card-visual">
+          <img src="${cardImageUrl(token)}" alt="卡片 ${token}" draggable="false">
+          <span class="missing-mark" aria-hidden="true">${token}</span>
+        </div>
+        <button type="button" data-draft-index="${index}" aria-label="移除 ${token}">×</button>
+      </article>
+    `;
+  }
+  const firstCode = cardTokenMembers(token)[0] || "";
+  return `
+    <article class="custom-draft-card" title="${escapeHtml(token.name)}">
+      <div class="card-visual custom-draft-logic">
+        ${firstCode ? `<img src="${cardImageUrl(firstCode)}" alt="${escapeHtml(token.name)}" draggable="false">` : ""}
+        <span class="missing-mark" aria-hidden="true">${customKindMeta[customCardKind(token)].short}</span>
+        <span class="custom-or-badge">${customKindMeta[customCardKind(token)].short}</span>
+      </div>
+      <button type="button" data-draft-index="${index}" aria-label="移除 ${escapeHtml(token.name)}">×</button>
+    </article>
+  `;
 }
 
 function renderCustomDraft() {
   elements.customDraftCount.textContent = String(state.customDraftMembers.length);
   if (!state.customDraftMembers.length) {
-    elements.customDraftMembers.innerHTML = `<div class="custom-draft-empty">拖放上方牌組中的正式卡片至此</div>`;
+    elements.customDraftMembers.innerHTML = `<div class="custom-draft-empty">拖放正式卡或既有自訂卡片至此</div>`;
     return;
   }
-  elements.customDraftMembers.innerHTML = state.customDraftMembers
-    .map(
-      (code, index) => `
-        <article class="custom-draft-card" title="${code}">
-          <div class="card-visual">
-            <img src="${cardImageUrl(code)}" alt="卡片 ${code}" draggable="false">
-            <span class="missing-mark" aria-hidden="true">${code}</span>
-          </div>
-          <button type="button" data-draft-index="${index}" aria-label="移除 ${code}">×</button>
-        </article>
-      `,
-    )
-    .join("");
+  elements.customDraftMembers.innerHTML = state.customDraftMembers.map(draftTokenMarkup).join("");
+}
+
+function renderCustomEffectTarget() {
+  if (!state.customDraftTarget) {
+    elements.customEffectTarget.innerHTML = `<div class="custom-effect-target-empty"><span>＋</span><p>拖入一張牌組原卡</p></div>`;
+    return;
+  }
+  elements.customEffectTarget.innerHTML = `
+    <article class="custom-draft-card custom-effect-target-card" title="${state.customDraftTarget}">
+      <div class="card-visual">
+        <img src="${cardImageUrl(state.customDraftTarget)}" alt="卡片 ${state.customDraftTarget}" draggable="false">
+        <span class="missing-mark" aria-hidden="true">${state.customDraftTarget}</span>
+      </div>
+      <button type="button" id="removeCustomEffectTarget" aria-label="移除改寫原卡 ${state.customDraftTarget}">×</button>
+    </article>
+  `;
 }
 
 function renderCustomCards() {
   elements.customCardList.innerHTML = state.customCards
     .map(
       (card) => `
-        <article class="custom-card-item" draggable="true" tabindex="0" data-custom-id="${escapeHtml(card.id)}" aria-label="自訂卡片 ${escapeHtml(card.name)}，包含 ${card.members.length} 種正式卡，點擊查看內容或拖曳使用">
+        <article class="custom-card-item${isSpecialEffectCard(card) ? " is-effect-card" : ""}" draggable="true" tabindex="0" data-custom-id="${escapeHtml(card.id)}" aria-label="自訂卡片 ${escapeHtml(card.name)}，${escapeHtml(customCardDescription(card))}，${isSpecialEffectCard(card) ? "僅可拖曳至改變卡片判定欄" : "可拖曳至右側條件欄"}">
           <div class="custom-card-stack">${customStackMarkup(card)}</div>
           <div class="custom-card-copy">
             <strong>${escapeHtml(card.name)}</strong>
-            <small>${card.members.join(" / ")}</small>
+            <small>${escapeHtml(customCardDescription(card))}</small>
           </div>
           <button type="button" class="remove-custom-card" data-custom-id="${escapeHtml(card.id)}" aria-label="移除自訂卡片 ${escapeHtml(card.name)}">×</button>
         </article>
@@ -579,18 +722,33 @@ function renderCustomCards() {
 function openCustomCardDetails(card) {
   if (!card) return;
   clearSelectedCard();
+  const kind = customCardKind(card);
   elements.customCardDetailsTitle.textContent = card.name;
-  elements.customCardDetailsCount.textContent = `${card.members.length} 種正式卡 · 抽到任一張即成立`;
-  elements.customCardDetailsGrid.innerHTML = card.members
+  elements.customCardDetailsKind.textContent = `CUSTOM CARD / ${customKindMeta[kind].short}`;
+  elements.customCardDetailsCount.textContent = customCardDescription(card);
+  const detailItems = isSpecialEffectCard(card)
+    ? [
+        { token: card.target, label: `改寫原卡（${customTriggerZoneLabel(card.triggerZone)}）` },
+        ...card.members.map((token) => ({ token, label: "附加條件" })),
+      ]
+    : card.members.map((token) => ({ token, label: "判定成員" }));
+  elements.customCardDetailsGrid.innerHTML = detailItems
     .map(
-      (code, index) => `
+      ({ token, label }, index) => typeof token === "string" ? `
         <article class="custom-details-card">
           <div class="card-visual">
-            <img src="${cardImageUrl(code)}" alt="卡片 ${code}" draggable="false">
-            <span class="missing-mark" aria-hidden="true">${code}</span>
+            <img src="${cardImageUrl(token)}" alt="卡片 ${token}" draggable="false">
+            <span class="missing-mark" aria-hidden="true">${token}</span>
             <span class="copy-number">${String(index + 1).padStart(2, "0")}</span>
           </div>
-          <strong>${code}</strong>
+          <small>${label}</small>
+          <strong>${token}</strong>
+        </article>
+      ` : `
+        <article class="custom-details-card">
+          <div class="custom-card-stack">${customStackMarkup(token)}</div>
+          <small>${label}</small>
+          <strong>${escapeHtml(token.name)}</strong>
         </article>
       `,
     )
@@ -604,33 +762,79 @@ function closeCustomCardDetails() {
 
 function openCustomCardEditor() {
   state.customDraftMembers = [];
+  state.customDraftTarget = null;
   elements.customCardNameInput.value = "";
+  elements.customCardKindInput.value = "or";
+  elements.customEffectAmountInput.value = "1";
+  elements.customEffectScopeInput.value = "both";
+  elements.customEffectTriggerZoneInput.value = "hand";
   elements.customCardEditor.hidden = false;
   elements.addCustomCardButton.disabled = true;
+  updateCustomEditorKind();
   renderCustomDraft();
+  renderCustomEffectTarget();
   elements.customCardNameInput.focus();
 }
 
 function closeCustomCardEditor() {
   state.customDraftMembers = [];
+  state.customDraftTarget = null;
   elements.customCardEditor.hidden = true;
   elements.addCustomCardButton.disabled = false;
   elements.customMemberDropzone.classList.remove("is-over");
 }
 
-function addDraftMember(code) {
-  if (!state.deck.includes(code)) return;
-  if (state.customDraftMembers.includes(code)) {
-    showToast(`${code} 已在這張自訂卡片中。`, "warning");
+function updateCustomEditorKind() {
+  const kind = elements.customCardKindInput.value;
+  const isEffect = ["draw", "mill"].includes(kind);
+  elements.customEffectFields.hidden = !isEffect;
+  elements.customMemberHint.textContent = isEffect
+    ? "原卡在所選位置公開時立即判定；附加條件可留空。若加入多項，則須在同一觸發位置全部成立；需要任一成立時可使用 OR 自訂卡。"
+    : kind === "and"
+      ? "拖入至少 2 個條件；所有條件同時於手牌成立才為 True。"
+      : "拖入至少 2 個條件；任一條件於手牌成立即為 True。";
+}
+
+function addDraftMember(rawToken) {
+  const token = normalizeCardToken(rawToken);
+  if (!token) return;
+  if (isSpecialEffectCard(token)) {
+    showToast("特殊判定卡只能放入右側的「改變卡片判定」欄。", "warning");
     return;
   }
-  state.customDraftMembers.push(code);
+  if (state.customDraftMembers.some((member) => cardTokenKey(member) === cardTokenKey(token))) {
+    showToast(`「${cardTokenLabel(token)}」已在這張自訂卡片中。`, "warning");
+    return;
+  }
+  state.customDraftMembers.push(cloneCardToken(token));
   renderCustomDraft();
 }
 
+function setCustomEffectTarget(rawToken) {
+  const token = normalizeCardToken(rawToken);
+  if (typeof token !== "string") {
+    showToast("改變處理方式的卡必須是牌組中的單一正式卡。", "warning");
+    return;
+  }
+  state.customDraftTarget = token;
+  renderCustomEffectTarget();
+}
+
 function saveCustomCard() {
-  if (state.customDraftMembers.length < 2) {
-    showToast("自訂卡片至少需要 2 種正式卡。", "warning");
+  const kind = elements.customCardKindInput.value;
+  const isEffect = ["draw", "mill"].includes(kind);
+  const minimum = isEffect ? 0 : 2;
+  if (state.customDraftMembers.length < minimum) {
+    showToast(`此類型自訂卡片至少需要 ${minimum} 個條件。`, "warning");
+    return;
+  }
+  if (isEffect && !state.customDraftTarget) {
+    showToast("請先設定一張欲改變處理方式的牌組原卡。", "warning");
+    return;
+  }
+  const amount = Number(elements.customEffectAmountInput.value);
+  if (isEffect && (!Number.isInteger(amount) || amount < 1 || amount > 60)) {
+    showToast("額外處理張數需介於 1 到 60。", "warning");
     return;
   }
   const fallbackName = `自訂卡片 ${state.customCards.length + 1}`;
@@ -639,25 +843,50 @@ function saveCustomCard() {
     type: "custom",
     id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     name,
-    members: state.customDraftMembers.slice(),
+    kind,
+    members: state.customDraftMembers.map(cloneCardToken),
   };
+  if (isEffect) {
+    card.target = state.customDraftTarget;
+    card.amount = amount;
+    card.scope = elements.customEffectScopeInput.value;
+    card.triggerZone = elements.customEffectTriggerZoneInput.value === "grave" ? "grave" : "hand";
+  }
   state.customCards.push(card);
   saveCustomCards();
   renderCustomCards();
   closeCustomCardEditor();
-  showToast(`已建立「${name}」，可拖曳至右側任何欄位。`, "success");
+  showToast(
+    isEffect
+      ? `已建立「${name}」，拖入右側「改變卡片判定」欄後才會生效。`
+      : `已建立「${name}」，可拖曳至右側條件欄位。`,
+    "success",
+  );
 }
 
 function removeCustomCard(customId) {
   const card = customCardById(customId);
   if (!card) return;
+  if (state.customDraftMembers.some((member) => tokenContainsCustomId(member, customId))) {
+    showToast(`「${card.name}」仍在目前編輯中的自訂卡片內，請先從編輯欄移除。`, "warning");
+    return;
+  }
+  const dependents = state.customCards.filter(
+    (item) => item.id !== customId && item.members.some((member) => tokenContainsCustomId(member, customId)),
+  );
+  if (dependents.length > 0) {
+    showToast(`「${card.name}」仍被「${dependents.map((item) => item.name).join("、")}」使用，請先移除依賴它的自訂卡。`, "warning");
+    return;
+  }
   const changedFloating = state.cardGroups.floating.some(
     (token) => isCustomCardToken(token) && token.id === customId,
   );
   state.customCards = state.customCards.filter((item) => item.id !== customId);
   for (const combo of state.combos) {
-    combo.required = combo.required.filter((token) => !isCustomCardToken(token) || token.id !== customId);
-    combo.forbidden = combo.forbidden.filter((token) => !isCustomCardToken(token) || token.id !== customId);
+    const fields = combo.kind === "grave" ? ["graveRequired"] : ["required", "forbidden"];
+    for (const field of fields) {
+      combo[field] = combo[field].filter((token) => !tokenContainsCustomId(token, customId));
+    }
   }
   for (const group of Object.keys(state.cardGroups)) {
     state.cardGroups[group] = state.cardGroups[group].filter(
@@ -676,9 +905,17 @@ function removeCustomCard(customId) {
   showToast(`已移除「${card.name}」及其右側欄位引用。`);
 }
 
+function tokenContainsCustomId(token, customId, path = new Set()) {
+  if (!isCustomCardToken(token)) return false;
+  if (token.id === customId) return true;
+  if (path.has(token.id)) return false;
+  const nextPath = new Set(path).add(token.id);
+  return token.members.some((member) => tokenContainsCustomId(member, customId, nextPath));
+}
+
 function groupCardsMarkup(cards, group) {
   if (cards.length === 0) {
-    return `<div class="drop-empty"><span>＋</span><p>拖放卡片至此</p></div>`;
+    return `<div class="drop-empty"><span>＋</span><p>${group === "judgment" ? "拖放已設定的特殊判定卡" : "拖放卡片至此"}</p></div>`;
   }
   return cards
     .map(
@@ -700,12 +937,16 @@ function miniCardVisualMarkup(token) {
       <span class="missing-mark" aria-hidden="true">${token}</span>
     `;
   }
-  const firstMember = token.members[0];
+  const firstMember = cardTokenMembers(token)[0] || "";
+  const kind = customCardKind(token);
+  const badge = ["draw", "mill"].includes(kind)
+    ? `${customKindMeta[kind].short} ${token.amount}`
+    : `${customKindMeta[kind].short} ${token.members.length}`;
   return `
     <div class="custom-mini-visual">
-      <img src="${cardImageUrl(firstMember)}" alt="自訂卡片 ${escapeHtml(token.name)}" draggable="false">
-      <span class="missing-mark" aria-hidden="true">OR</span>
-      <span class="custom-or-badge">OR ${token.members.length}</span>
+      ${firstMember ? `<img src="${cardImageUrl(firstMember)}" alt="自訂卡片 ${escapeHtml(token.name)}" draggable="false">` : ""}
+      <span class="missing-mark" aria-hidden="true">${customKindMeta[kind].short}</span>
+      <span class="custom-or-badge">${badge}</span>
     </div>
   `;
 }
@@ -748,15 +989,19 @@ function resetFloatingCountRange() {
 }
 
 function renderCardGroups() {
-  for (const group of ["floating", "goingFirst", "goingSecond", "brick"]) {
+  for (const group of ["judgment", "floating", "goingFirst", "goingSecond", "brick"]) {
     const cards = state.cardGroups[group];
     const cardsContainer = elements.cardGroups.querySelector(`[data-group-cards="${group}"]`);
     const count = elements.cardGroups.querySelector(`[data-group-count="${group}"]`);
     const zone = elements.cardGroups.querySelector(`.group-dropzone[data-group="${group}"]`);
     cardsContainer.innerHTML = groupCardsMarkup(cards, group);
-    const effectiveCount = effectiveCardSelectionCount(cards);
-    count.textContent = `${effectiveCount} 張`;
-    count.title = cards.some(isCustomCardToken) ? `${cards.length} 個設定項目，共代表 ${effectiveCount} 張正式卡` : "";
+    const effectiveCount = group === "judgment" ? cards.length : effectiveCardSelectionCount(cards);
+    count.textContent = group === "judgment" ? `${effectiveCount} 項` : `${effectiveCount} 張`;
+    count.title = group === "judgment"
+      ? "只有此欄中的特殊判定會改變模擬抽牌或堆墓結果"
+      : cards.some(isCustomCardToken)
+        ? `${cards.length} 個設定項目，共代表 ${effectiveCount} 張正式卡`
+        : "";
     zone.classList.toggle("is-disabled", state.deck.length === 0);
     zone.tabIndex = state.deck.length ? 0 : -1;
   }
@@ -781,6 +1026,20 @@ function miniCardsMarkup(cards, comboId, role) {
     .join("");
 }
 
+function comboConditionMarkup(combo, index, field, label, className, description) {
+  return `
+    <div class="condition-block ${className}">
+      <div class="condition-label">
+        <span><i></i>${label}</span>
+        <small>${combo[field].length} 項 · ${description}</small>
+      </div>
+      <div class="dropzone" data-combo-id="${combo.id}" data-role="${field}" role="button" tabindex="0" aria-label="啟動組合 ${index + 1} ${label}欄位">
+        ${miniCardsMarkup(combo[field], combo.id, field)}
+      </div>
+    </div>
+  `;
+}
+
 function renderCombos() {
   if (state.combos.length === 0) {
     elements.combosList.innerHTML = `
@@ -796,43 +1055,37 @@ function renderCombos() {
 
   elements.combosList.innerHTML = state.combos
     .map(
-      (combo, index) => `
-        <section class="combo-card" data-combo-id="${combo.id}">
+      (combo, index) => {
+        const isGrave = combo.kind === "grave";
+        const conditions = isGrave
+          ? comboConditionMarkup(combo, index, "graveRequired", "墓地／除外結果需求", "grave-block", "成立即為 True")
+          : `${comboConditionMarkup(combo, index, "required", "手牌需求", "required-block", "必須全部成立")}
+             ${comboConditionMarkup(combo, index, "forbidden", "不可上手", "forbidden-block", "任一成立即失敗")}`;
+        return `
+        <section class="combo-card${isGrave ? " grave-combo" : ""}" data-combo-id="${combo.id}">
           <header>
-            <div><span class="combo-index">${String(index + 1).padStart(2, "0")}</span><h3>啟動組合 ${index + 1}</h3></div>
+            <div><span class="combo-index">${String(index + 1).padStart(2, "0")}</span><h3>${isGrave ? "墓地／除外啟動" : "手牌啟動"} ${index + 1}</h3></div>
             <button type="button" class="remove-combo" data-combo-id="${combo.id}" aria-label="移除啟動組合 ${index + 1}">移除</button>
           </header>
-          <div class="condition-block required-block">
-            <div class="condition-label">
-              <span><i></i>上手</span>
-              <small>${combo.required.length} 張 · 必須全部出現</small>
-            </div>
-            <div class="dropzone" data-combo-id="${combo.id}" data-role="required" role="button" tabindex="0" aria-label="啟動組合 ${index + 1} 上手欄位">
-              ${miniCardsMarkup(combo.required, combo.id, "required")}
-            </div>
-          </div>
-          <div class="condition-block forbidden-block">
-            <div class="condition-label">
-              <span><i></i>不可上手</span>
-              <small>${combo.forbidden.length} 張 · 出現任一即失敗</small>
-            </div>
-            <div class="dropzone" data-combo-id="${combo.id}" data-role="forbidden" role="button" tabindex="0" aria-label="啟動組合 ${index + 1} 不可上手欄位">
-              ${miniCardsMarkup(combo.forbidden, combo.id, "forbidden")}
-            </div>
-          </div>
+          ${conditions}
         </section>
-      `,
+      `;
+      },
     )
     .join("");
   updateCalculateState();
 }
 
-function addCombo() {
+function addCombo(kind = "hand") {
   if (!state.deck.length) {
     showToast("請先載入 .ydk 牌組。", "warning");
     return;
   }
-  state.combos.push({ id: state.nextComboId++, required: [], forbidden: [] });
+  state.combos.push(
+    kind === "grave"
+      ? { id: state.nextComboId++, kind: "grave", graveRequired: [] }
+      : { id: state.nextComboId++, kind: "hand", required: [], forbidden: [] },
+  );
   saveCombos();
   renderCombos();
   invalidateResult();
@@ -848,9 +1101,15 @@ function removeCombo(comboId) {
 
 function addCardToCombo(comboId, role, rawToken) {
   const token = normalizeCardToken(rawToken);
-  if (!token || !["required", "forbidden"].includes(role)) return;
   const combo = state.combos.find((item) => item.id === comboId);
-  if (!combo) return;
+  const allowedRoles = combo?.kind === "grave"
+    ? ["graveRequired"]
+    : ["required", "forbidden"];
+  if (!token || !combo || !allowedRoles.includes(role)) return;
+  if (isSpecialEffectCard(token)) {
+    showToast("特殊判定卡只能放入「改變卡片判定」欄。", "warning");
+    return;
+  }
   combo[role].push(cloneCardToken(token));
   clearSelectedCard();
   saveCombos();
@@ -869,7 +1128,28 @@ function removeCardFromCombo(comboId, role, index) {
 
 function addCardToGroup(group, rawToken) {
   const token = normalizeCardToken(rawToken);
-  if (!token || !["floating", "goingFirst", "goingSecond", "brick"].includes(group)) return;
+  if (!token || !["judgment", "floating", "goingFirst", "goingSecond", "brick"].includes(group)) return;
+  if (group === "judgment") {
+    if (!isConfiguredEffectCard(token)) {
+      showToast("只有已設定原卡與改變條件的特殊判定卡可放入此欄。", "warning");
+      return;
+    }
+    if (state.cardGroups.judgment.some((item) => item.id === token.id)) {
+      showToast(`「${token.name}」已啟用。`, "warning");
+      return;
+    }
+    state.cardGroups.judgment.push(cloneCardToken(token));
+    clearSelectedCard();
+    saveCardGroups();
+    renderCardGroups();
+    invalidateResult();
+    showToast(`已啟用「${token.name}」的卡片判定改寫。`, "success");
+    return;
+  }
+  if (isSpecialEffectCard(token)) {
+    showToast("特殊判定卡只能放入「改變卡片判定」欄。", "warning");
+    return;
+  }
   if (isCustomCardToken(token)) {
     if (state.cardGroups[group].some((item) => isCustomCardToken(item) && item.id === token.id)) {
       showToast(`「${token.name}」已加入該分類。`, "warning");
@@ -948,8 +1228,16 @@ function updateCalculateState() {
 function validateSimulation() {
   if (!state.deck.length) return "請先載入牌組。";
   if (!state.combos.length) return "請至少添加一個啟動組合。";
-  const emptyIndex = state.combos.findIndex((combo) => combo.required.length === 0);
-  if (emptyIndex >= 0) return `啟動組合 ${emptyIndex + 1} 至少需要一張「上手」卡。`;
+  for (let index = 0; index < state.combos.length; index += 1) {
+    const combo = state.combos[index];
+    if (combo.kind === "grave") {
+      if (combo.graveRequired.length === 0) {
+        return `墓地／除外啟動 ${index + 1} 至少需要一項「墓地／除外結果需求」。`;
+      }
+    } else if (combo.required.length === 0) {
+      return `手牌啟動 ${index + 1} 至少需要一項「手牌需求」。`;
+    }
+  }
 
   const handSize = Number(elements.handSizeInput.value);
   const trials = Number(elements.trialCountInput.value);
@@ -1123,6 +1411,7 @@ function runGameSimulation() {
     mode: state.gameMode,
     deck: state.deck,
     combos: state.combos,
+    activeEffects: state.cardGroups.judgment,
     handSize,
     trials,
     goingFirstCards: state.cardGroups.goingFirst,
@@ -1181,13 +1470,13 @@ function runSimulation() {
       elements.resultFailure.textContent = formatInteger(result.failure);
       elements.resultInterval.textContent = `${formatRate(result.intervalLow)}–${formatRate(result.intervalHigh)}`;
       elements.resultGoingFirstExpected.textContent = result.goingFirstExpected.toFixed(3);
-      elements.resultGoingFirstDetail.textContent = `試抽 ${handSize} 張 · 至少一張 ${formatRate(result.goingFirstHitRate)}`;
+      elements.resultGoingFirstDetail.textContent = `基礎起手 ${handSize} 張（含抽牌追加）· 至少一張 ${formatRate(result.goingFirstHitRate)}`;
       elements.resultGoingSecondExpected.textContent = result.goingSecondExpected.toFixed(3);
-      elements.resultGoingSecondDetail.textContent = `試抽 ${handSize} 張 · 至少一張 ${formatRate(result.goingSecondHitRate)}`;
+      elements.resultGoingSecondDetail.textContent = `基礎起手 ${handSize} 張（含抽牌追加）· 至少一張 ${formatRate(result.goingSecondHitRate)}`;
       elements.resultBrickGames.textContent = Number.isFinite(result.brickGamesPerHit)
         ? result.brickGamesPerHit.toFixed(2)
         : "未發生";
-      elements.resultBrickDetail.textContent = `試抽 ${handSize} 張 · 至少一張 ${formatRate(result.brickHitRate)}`;
+      elements.resultBrickDetail.textContent = `基礎起手 ${handSize} 張（含抽牌追加）· 至少一張 ${formatRate(result.brickHitRate)}`;
       elements.resultCard.hidden = false;
       worker.terminate();
       state.worker = null;
@@ -1207,6 +1496,7 @@ function runSimulation() {
   worker.postMessage({
     deck: state.deck,
     combos: state.combos,
+    activeEffects: state.cardGroups.judgment,
     handSize,
     trials,
     goingFirstCards: state.cardGroups.goingFirst,
@@ -1289,6 +1579,45 @@ elements.cardGrid.addEventListener("keydown", (event) => {
 elements.addCustomCardButton.addEventListener("click", openCustomCardEditor);
 elements.cancelCustomCardButton.addEventListener("click", closeCustomCardEditor);
 elements.saveCustomCardButton.addEventListener("click", saveCustomCard);
+elements.customCardKindInput.addEventListener("change", updateCustomEditorKind);
+elements.customEffectTarget.addEventListener("click", (event) => {
+  if (event.target.closest("#removeCustomEffectTarget")) {
+    state.customDraftTarget = null;
+    renderCustomEffectTarget();
+  }
+});
+for (const eventName of ["dragenter", "dragover"]) {
+  elements.customEffectTargetDropzone.addEventListener(eventName, (event) => {
+    if (elements.customEffectFields.hidden) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    elements.customEffectTargetDropzone.classList.add("is-over");
+  });
+}
+elements.customEffectTargetDropzone.addEventListener("dragleave", (event) => {
+  if (!elements.customEffectTargetDropzone.contains(event.relatedTarget)) {
+    elements.customEffectTargetDropzone.classList.remove("is-over");
+  }
+});
+elements.customEffectTargetDropzone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  elements.customEffectTargetDropzone.classList.remove("is-over");
+  const token = draggedCardToken(event.dataTransfer);
+  if (token) setCustomEffectTarget(token);
+});
+elements.customEffectTargetDropzone.addEventListener("click", (event) => {
+  if (event.target.closest("#removeCustomEffectTarget")) return;
+  if (state.selectedToken) {
+    setCustomEffectTarget(state.selectedToken);
+    clearSelectedCard();
+  }
+});
+elements.customEffectTargetDropzone.addEventListener("keydown", (event) => {
+  if ((event.key !== "Enter" && event.key !== " ") || !state.selectedToken) return;
+  event.preventDefault();
+  setCustomEffectTarget(state.selectedToken);
+  clearSelectedCard();
+});
 elements.customDraftMembers.addEventListener("click", (event) => {
   const button = event.target.closest("[data-draft-index]");
   if (!button) return;
@@ -1312,8 +1641,7 @@ elements.customMemberDropzone.addEventListener("drop", (event) => {
   event.preventDefault();
   elements.customMemberDropzone.classList.remove("is-over");
   const token = draggedCardToken(event.dataTransfer);
-  if (typeof token === "string") addDraftMember(token);
-  else if (token) showToast("自訂卡片只能由上方的正式卡片組成。", "warning");
+  if (token) addDraftMember(token);
 });
 elements.customMemberDropzone.addEventListener("click", () => {
   if (typeof state.selectedToken !== "string") return;
@@ -1410,7 +1738,8 @@ elements.cardGroups.addEventListener("drop", (event) => {
   if (token) addCardToGroup(zone.dataset.group, token);
 });
 
-elements.addComboButton.addEventListener("click", addCombo);
+elements.addComboButton.addEventListener("click", () => addCombo("hand"));
+elements.addGraveComboButton.addEventListener("click", () => addCombo("grave"));
 elements.combosList.addEventListener("click", (event) => {
   const removeComboButton = event.target.closest(".remove-combo");
   if (removeComboButton) {
@@ -1502,12 +1831,14 @@ elements.trialCountInput.addEventListener("input", invalidateResult);
 attachImageFallback(elements.cardGrid);
 attachImageFallback(elements.customCardList);
 attachImageFallback(elements.customDraftMembers);
+attachImageFallback(elements.customEffectTarget);
 attachImageFallback(elements.customCardDetailsGrid);
 attachImageFallback(elements.cardGroups);
 attachImageFallback(elements.combosList);
 renderDeck();
 renderCustomCards();
 renderCustomDraft();
+renderCustomEffectTarget();
 renderCardGroups();
 renderCombos();
 updateGameHandLabels();

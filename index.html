@@ -71,9 +71,9 @@
         <section class="custom-card-strip" id="customCardStrip" hidden aria-labelledby="customCardTitle">
           <header class="custom-card-heading">
             <div>
-              <p class="section-index">CUSTOM / OR</p>
+              <p class="section-index">CUSTOM / LOGIC</p>
               <h3 id="customCardTitle">自訂卡片</h3>
-              <small>將多張正式卡合併為一個「任一成立」的可拖曳卡片</small>
+              <small>OR／AND 可用於條件；抽牌與堆墓判定僅能啟用於「改變卡片判定」</small>
             </div>
             <button class="button button-secondary" id="addCustomCardButton" type="button">
               <span aria-hidden="true">＋</span> 新增自訂卡片
@@ -86,13 +86,52 @@
                 <span>名稱</span>
                 <input id="customCardNameInput" type="text" maxlength="30" placeholder="例如：任一初動點">
               </label>
-              <p><strong id="customDraftCount">0</strong> 種正式卡</p>
+              <label>
+                <span>判定類型</span>
+                <select id="customCardKindInput">
+                  <option value="or">OR｜任一成立</option>
+                  <option value="and">AND｜全部成立</option>
+                  <option value="draw">特殊判定｜抽牌</option>
+                  <option value="mill">特殊判定｜堆墓或除外</option>
+                </select>
+              </label>
+              <p><strong id="customDraftCount">0</strong> 個條件</p>
             </div>
-            <div class="custom-member-dropzone" id="customMemberDropzone" role="button" tabindex="0" aria-label="自訂卡片成員欄">
+            <div class="custom-effect-fields" id="customEffectFields" hidden>
+              <div class="custom-effect-target-field">
+                <div>
+                  <strong>改變處理方式的卡</strong>
+                  <small>只能指定牌組中的一張正式卡</small>
+                </div>
+                <div class="custom-effect-target-dropzone" id="customEffectTargetDropzone" role="button" tabindex="0" aria-label="欲改變處理方式的原卡">
+                  <div class="custom-effect-target" id="customEffectTarget"></div>
+                </div>
+              </div>
+              <label class="custom-effect-trigger-field">
+                <span>觸發位置</span>
+                <select id="customEffectTriggerZoneInput">
+                  <option value="hand">手牌</option>
+                  <option value="grave">墓地／除外</option>
+                </select>
+              </label>
+              <label>
+                <span>結果張數</span>
+                <input id="customEffectAmountInput" type="number" min="1" max="60" value="1" inputmode="numeric">
+              </label>
+              <label>
+                <span>作用域</span>
+                <select id="customEffectScopeInput">
+                  <option value="both">先手及後手</option>
+                  <option value="first">僅先手</option>
+                  <option value="second">僅後手</option>
+                </select>
+              </label>
+            </div>
+            <div class="custom-member-dropzone" id="customMemberDropzone" role="button" tabindex="0" aria-label="自訂卡片成員或附加條件欄">
               <div class="custom-draft-members" id="customDraftMembers"></div>
             </div>
             <div class="custom-editor-actions">
-              <small>從上方拖入，或先選卡再點此欄；至少 2 種，抽到任一種即成立。</small>
+              <small id="customMemberHint">從上方拖入正式卡；OR 至少需要 2 個條件。</small>
               <div>
                 <button class="button button-ghost" id="cancelCustomCardButton" type="button">取消</button>
                 <button class="button button-accent" id="saveCustomCardButton" type="button">建立自訂卡片</button>
@@ -115,10 +154,28 @@
         <div class="card-groups" id="cardGroups">
           <div class="card-groups-heading">
             <div>
+              <strong>判定改寫</strong>
+              <small>只有放入下方欄位的特殊判定才會改變模擬</small>
+            </div>
+            <span class="is-active">影響模擬</span>
+          </div>
+
+          <section class="card-group group-judgment">
+            <header>
+              <div><i></i><strong>改變卡片判定</strong><small>僅接受已設定完成的特殊抽牌／堆墓判定</small></div>
+              <span class="group-count" data-group-count="judgment">0 項</span>
+            </header>
+            <div class="group-dropzone" data-group="judgment" role="button" tabindex="0" aria-label="改變卡片判定欄">
+              <div class="group-cards" data-group-cards="judgment"></div>
+            </div>
+          </section>
+
+          <div class="card-groups-heading card-role-heading">
+            <div>
               <strong>卡位分類</strong>
               <small>拖放卡片；所有分類與啟動組合皆可重疊</small>
             </div>
-            <span>不影響啟動率</span>
+            <span>僅整理與報告</span>
           </div>
 
           <section class="card-group group-floating">
@@ -168,15 +225,19 @@
         </div>
 
         <div class="rule-explainer">
-          <span><i class="mini-key required-key"></i>上手：每張都必須抽到</span>
+          <span><i class="mini-key required-key"></i>手牌需求：每項都必須成立</span>
           <span><i class="mini-key forbidden-key"></i>不可上手：任一張出現即失敗</span>
+          <span><i class="mini-key grave-key"></i>墓地／除外結果：需求成立時整組為 True</span>
         </div>
 
         <div class="combos-list" id="combosList"></div>
 
         <div class="add-combo-footer">
           <button class="button button-accent" id="addComboButton" type="button">
-            <span aria-hidden="true">＋</span> 添加啟動組合
+            <span aria-hidden="true">＋</span> 添加手牌啟動
+          </button>
+          <button class="button button-secondary" id="addGraveComboButton" type="button">
+            <span aria-hidden="true">＋</span> 添加墓地／除外啟動
           </button>
         </div>
 
@@ -200,6 +261,7 @@
               <small>次</small>
             </label>
           </div>
+          <p class="simulation-scope-note">「計算啟動率」採先手作用域；賽局模擬會分別套用先手與後手特殊判定。</p>
 
           <button class="button button-calculate" id="calculateButton" type="button" disabled>
             <span class="calculate-label">計算啟動率</span>
@@ -346,7 +408,7 @@
       <section class="custom-details-shell">
         <header>
           <div>
-            <p class="section-index">CUSTOM CARD / OR</p>
+            <p class="section-index" id="customCardDetailsKind">CUSTOM CARD / OR</p>
             <h2 id="customCardDetailsTitle">自訂卡片</h2>
             <small id="customCardDetailsCount">0 種正式卡 · 任一成立</small>
           </div>

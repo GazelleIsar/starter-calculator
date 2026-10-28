@@ -51,6 +51,264 @@ test("a custom card uses OR semantics across its formal deck members", () => {
   assert.equal(isSuccessfulHand(["4", "9"], combo), false);
 });
 
+test("an AND custom card only matches when every nested member is present", () => {
+  const andCard = { type: "custom", id: "and-1", name: "兩卡同時", kind: "and", members: ["1", "2"] };
+  const combos = [{ required: [andCard], forbidden: [] }];
+  assert.equal(isSuccessfulHand(["1", "2"], combos), true);
+  assert.equal(isSuccessfulHand(["1", "3"], combos), false);
+});
+
+test("a draw effect adds cards to the hand before starter combos are evaluated", () => {
+  const drawCard = {
+    type: "custom",
+    id: "draw-1",
+    name: "抽一張",
+    kind: "draw",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "first",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3", "4"],
+    combos: [{ required: ["3"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 1);
+});
+
+test("a configured effect does nothing until it is placed in the active judgment field", () => {
+  const drawCard = {
+    type: "custom",
+    id: "inactive-draw",
+    name: "尚未啟用的抽牌改寫",
+    kind: "draw",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "both",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3"],
+    combos: [{ required: ["3"], forbidden: [] }],
+    customCards: [drawCard],
+    activeEffects: [],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 0);
+});
+
+test("a rewritten card requires both its original card and every change condition", () => {
+  const drawCard = {
+    type: "custom",
+    id: "target-and-condition",
+    name: "原卡加費用",
+    kind: "draw",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "both",
+  };
+  const missingCondition = runMonteCarlo({
+    deck: ["1", "3", "2"],
+    combos: [{ required: ["2"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 1,
+    trials: 1,
+    random: () => 0,
+  });
+  const bothPresent = runMonteCarlo({
+    deck: ["1", "2", "3"],
+    combos: [{ required: ["3"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(missingCondition.success, 0);
+  assert.equal(bothPresent.success, 1);
+});
+
+test("a grave starter is true from its grave result without a hand requirement", () => {
+  assert.equal(
+    isSuccessfulHand([], [{ kind: "grave", graveRequired: ["9"] }], false, ["9"]),
+    true,
+  );
+});
+
+test("draw effects can chain when an added card satisfies another trigger", () => {
+  const firstDraw = {
+    type: "custom",
+    id: "draw-chain-1",
+    name: "第一段抽牌",
+    kind: "draw",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "both",
+  };
+  const secondDraw = {
+    type: "custom",
+    id: "draw-chain-2",
+    name: "第二段抽牌",
+    kind: "draw",
+    target: "3",
+    members: ["2"],
+    amount: 1,
+    scope: "both",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3", "4", "5"],
+    combos: [{ required: ["4"], forbidden: [] }],
+    activeEffects: [firstDraw, secondDraw],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 1);
+});
+
+test("public cards chain immediately across hand and grave trigger zones", () => {
+  const drawA = {
+    type: "custom",
+    id: "public-a",
+    name: "A 手牌抽一",
+    kind: "draw",
+    target: "1",
+    members: [],
+    amount: 1,
+    scope: "both",
+    triggerZone: "hand",
+  };
+  const millB = {
+    type: "custom",
+    id: "public-b",
+    name: "B 手牌堆一",
+    kind: "mill",
+    target: "2",
+    members: [],
+    amount: 1,
+    scope: "both",
+    triggerZone: "hand",
+  };
+  const millC = {
+    type: "custom",
+    id: "public-c",
+    name: "C 墓地堆一",
+    kind: "mill",
+    target: "3",
+    members: [],
+    amount: 1,
+    scope: "both",
+    triggerZone: "grave",
+  };
+  const drawD = {
+    type: "custom",
+    id: "public-d",
+    name: "D 墓地抽一",
+    kind: "draw",
+    target: "4",
+    members: [],
+    amount: 1,
+    scope: "both",
+    triggerZone: "grave",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3", "4", "5"],
+    combos: [{ required: ["5"], forbidden: [] }],
+    activeEffects: [drawD, millC, millB, drawA],
+    handSize: 1,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 1);
+});
+
+test("a special effect can use an AND custom card as its hand trigger", () => {
+  const andTrigger = {
+    type: "custom",
+    id: "and-trigger",
+    name: "兩卡觸發",
+    kind: "and",
+    members: ["2", "3"],
+  };
+  const drawCard = {
+    type: "custom",
+    id: "nested-draw",
+    name: "條件抽牌",
+    kind: "draw",
+    target: "1",
+    members: [andTrigger],
+    amount: 1,
+    scope: "both",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3", "4", "5"],
+    combos: [{ required: ["4"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 3,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 1);
+});
+
+test("a rewritten card can use an OR custom condition such as any matching quick-play spell", () => {
+  const quickPlayOr = {
+    type: "custom",
+    id: "quick-play-or",
+    name: "任一速攻魔法",
+    kind: "or",
+    members: ["2", "3"],
+  };
+  const drawCard = {
+    type: "custom",
+    id: "draw-with-quick-play",
+    name: "原卡加任一速攻抽牌",
+    kind: "draw",
+    target: "1",
+    members: [quickPlayOr],
+    amount: 1,
+    scope: "both",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "3", "4", "5"],
+    combos: [{ required: ["4"], forbidden: [] }],
+    activeEffects: [drawCard],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 1);
+});
+
+test("a mill effect fills the grave zone used by grave starter combos", () => {
+  const millCard = {
+    type: "custom",
+    id: "mill-1",
+    name: "盲堆一張",
+    kind: "mill",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "both",
+  };
+  const result = runMonteCarlo({
+    deck: ["1", "2", "3", "4"],
+    combos: [{ kind: "grave", graveRequired: ["3"] }],
+    activeEffects: [millCard],
+    handSize: 2,
+    trials: 1,
+    random: () => 0,
+  });
+  assert.equal(result.success, 1);
+});
+
 test("two custom requirements still need two distinct physical cards", () => {
   const custom = { type: "custom", id: "starter", name: "任一初動", members: ["1", "2", "3"] };
   const combo = [{ required: [custom, custom], forbidden: [] }];
@@ -216,6 +474,33 @@ test("game simulation accepts custom cards in starter and role conditions", () =
   assert.equal(result.secondRate, 1);
 });
 
+test("game simulation applies special effects only on their configured side", () => {
+  const secondOnlyDraw = {
+    type: "custom",
+    id: "second-draw",
+    name: "後手抽一",
+    kind: "draw",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "second",
+  };
+  const result = runGameSimulation({
+    deck: ["1", "2", "3", "4"],
+    combos: [{ required: ["4"], forbidden: [] }],
+    activeEffects: [secondOnlyDraw],
+    handSize: 2,
+    trials: 1,
+    firstStarterMin: 1,
+    firstRoleMin: 0,
+    secondStarterMin: 1,
+    secondRoleMin: 0,
+    random: () => 0,
+  });
+  assert.equal(result.firstRate, 0);
+  assert.equal(result.secondRate, 1);
+});
+
 test("a custom floating card expands to every matching physical deck card", () => {
   const custom = { type: "custom", id: "flex", name: "任一浮動位", members: ["1", "2"] };
   const result = optimizeFloatingAllocation({
@@ -315,6 +600,35 @@ test("reverse optimizer masks floating assignments and only uses selected alloca
   assert.equal(result.secondRate, 1);
   assert.equal(result.combinedRate, 0.5);
   assert.deepEqual(result.allocation, [{ method: "starterSecond", cards: ["1"] }]);
+});
+
+test("reverse optimizer evaluates mill effects and grave starter combos", () => {
+  const millCard = {
+    type: "custom",
+    id: "reverse-mill",
+    name: "盲堆一張",
+    kind: "mill",
+    target: "1",
+    members: ["2"],
+    amount: 1,
+    scope: "both",
+  };
+  const result = optimizeFloatingAllocation({
+    deck: ["1", "2", "3", "4"],
+    combos: [{ kind: "grave", graveRequired: ["3"] }],
+    activeEffects: [millCard],
+    handSize: 2,
+    trials: 1,
+    floatingCards: ["4"],
+    allocationMethods: ["second"],
+    firstStarterMin: 1,
+    firstRoleMin: 0,
+    secondStarterMin: 1,
+    secondRoleMin: 0,
+    random: () => 0,
+  });
+  assert.equal(result.firstRate, 1);
+  assert.equal(result.secondRate, 0);
 });
 
 test("reverse optimizer drops whole starter combos when every custom OR member is fully floating", () => {

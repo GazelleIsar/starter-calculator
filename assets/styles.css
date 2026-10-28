@@ -658,6 +658,7 @@ h1 span {
 }
 
 .custom-editor-topline {
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 10px;
@@ -672,7 +673,10 @@ h1 span {
   font-size: 10px;
 }
 
-.custom-editor-topline input {
+.custom-editor-topline input,
+.custom-editor-topline select,
+.custom-effect-fields input,
+.custom-effect-fields select {
   width: 100%;
   min-height: 34px;
   padding: 0 10px;
@@ -683,8 +687,114 @@ h1 span {
   outline: 0;
 }
 
-.custom-editor-topline input:focus {
+.custom-editor-topline input:focus,
+.custom-editor-topline select:focus,
+.custom-effect-fields input:focus,
+.custom-effect-fields select:focus {
   border-color: var(--lime);
+}
+
+.custom-effect-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid rgba(112, 168, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(67, 127, 214, 0.055);
+}
+
+.custom-effect-fields[hidden] {
+  display: none;
+}
+
+.custom-effect-fields label {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr);
+  gap: 9px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.custom-effect-fields .custom-effect-trigger-field {
+  grid-column: 1 / -1;
+}
+
+.custom-effect-target-field {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(150px, 1fr) minmax(130px, 2fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.custom-effect-target-field > div:first-child {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.custom-effect-target-field strong {
+  font-size: 11px;
+}
+
+.custom-effect-target-field small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.custom-effect-target-dropzone {
+  min-height: 76px;
+  padding: 6px;
+  border: 1px dashed rgba(112, 168, 255, 0.38);
+  border-radius: 7px;
+  outline: 0;
+  background: rgba(7, 13, 20, 0.28);
+  cursor: copy;
+  transition: 140ms ease;
+  transition-property: border-color, background, box-shadow;
+}
+
+.custom-effect-target-dropzone.is-over,
+.custom-effect-target-dropzone:focus-visible {
+  border-color: var(--blue);
+  background: rgba(112, 168, 255, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(112, 168, 255, 0.16);
+}
+
+.custom-effect-target,
+.custom-effect-target-empty {
+  min-height: 62px;
+}
+
+.custom-effect-target-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  color: #758493;
+  font-size: 9px;
+}
+
+.custom-effect-target-empty span {
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.custom-effect-target-empty p {
+  margin: 0;
+}
+
+.custom-effect-target-card {
+  width: 44px;
+  margin: 0 auto;
+}
+
+.custom-effect-target-card .card-visual {
+  height: 62px;
 }
 
 .custom-editor-topline p {
@@ -747,6 +857,15 @@ h1 span {
 
 .custom-draft-card .card-visual {
   height: 84px;
+}
+
+.custom-draft-card .custom-draft-logic {
+  overflow: hidden;
+}
+
+.custom-draft-card .custom-or-badge {
+  right: 2px;
+  bottom: 2px;
 }
 
 .custom-draft-card:last-child {
@@ -1023,6 +1142,11 @@ h1 span {
   width: 100%;
 }
 
+.custom-details-card > .custom-card-stack {
+  width: 55px;
+  margin: 10px auto 0;
+}
+
 .custom-details-card > strong {
   display: block;
   margin-top: 6px;
@@ -1033,6 +1157,15 @@ h1 span {
   font-weight: 500;
   text-align: center;
   text-overflow: ellipsis;
+}
+
+.custom-details-card > small {
+  display: block;
+  margin-top: 7px;
+  color: var(--blue);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
 }
 
 .custom-details-hint {
@@ -1096,6 +1229,11 @@ h1 span {
   grid-column: 1 / -1;
 }
 
+.group-judgment {
+  grid-column: 1 / -1;
+  border-color: rgba(69, 166, 255, 0.28);
+}
+
 .group-brick {
   grid-column: 1 / -1;
 }
@@ -1121,6 +1259,18 @@ h1 span {
   color: #778078;
   font-size: 8.5px;
   font-weight: 800;
+}
+
+.card-groups-heading > span.is-active {
+  border-color: rgba(69, 166, 255, 0.32);
+  color: #aad2ff;
+  background: rgba(69, 166, 255, 0.07);
+}
+
+.card-role-heading {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .card-group {
@@ -1154,6 +1304,7 @@ h1 span {
 }
 
 .group-floating header i { background: var(--blue); }
+.group-judgment header i { background: #45a6ff; box-shadow: 0 0 10px rgba(69, 166, 255, 0.4); }
 .group-going-first header i { background: #c594ff; }
 .group-going-second header i { background: #ffc465; }
 .group-brick header i { background: #ff7d72; }
@@ -1199,6 +1350,7 @@ h1 span {
 }
 
 .group-floating .group-dropzone.is-over { background: rgba(114, 168, 255, 0.1); }
+.group-judgment .group-dropzone.is-over { background: rgba(69, 166, 255, 0.11); }
 .group-going-first .group-dropzone.is-over { background: rgba(197, 148, 255, 0.09); }
 .group-going-second .group-dropzone.is-over { background: rgba(255, 196, 101, 0.09); }
 .group-brick .group-dropzone.is-over { background: rgba(255, 125, 114, 0.09); }
@@ -1258,6 +1410,10 @@ h1 span {
   background: var(--danger);
 }
 
+.grave-key {
+  background: #70a8ff;
+}
+
 .combos-list {
   display: grid;
   gap: 10px;
@@ -1265,6 +1421,9 @@ h1 span {
 }
 
 .add-combo-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
   padding: 0 12px 14px;
 }
 
@@ -1369,6 +1528,11 @@ h1 span {
   box-shadow: 0 0 10px rgba(255, 107, 112, 0.3);
 }
 
+.grave-block .condition-label i {
+  background: #70a8ff;
+  box-shadow: 0 0 10px rgba(112, 168, 255, 0.32);
+}
+
 .condition-label small {
   color: #6f786f;
   font-size: 9.5px;
@@ -1401,6 +1565,18 @@ h1 span {
 .forbidden-block .dropzone.is-over {
   border-color: var(--danger);
   background: rgba(255, 107, 112, 0.06);
+}
+
+.grave-block .dropzone.is-over {
+  border-color: #70a8ff;
+  background: rgba(112, 168, 255, 0.065);
+}
+
+.simulation-scope-note {
+  margin: -2px 0 12px;
+  color: #78827a;
+  font-size: 9.5px;
+  line-height: 1.5;
 }
 
 .drop-empty {
@@ -2520,6 +2696,10 @@ h1 span {
     grid-column: auto;
   }
 
+  .group-judgment {
+    grid-column: auto;
+  }
+
   .group-brick,
   .expectation-brick {
     grid-column: auto;
@@ -2553,6 +2733,19 @@ h1 span {
   .custom-editor-topline label {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .custom-effect-fields,
+  .add-combo-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-effect-fields label {
+    grid-template-columns: 1fr;
+  }
+
+  .custom-effect-target-field {
+    grid-template-columns: 1fr;
   }
 
   .custom-details-shell {
