@@ -10,6 +10,30 @@ import {
   simpleDeckHash,
 } from "../assets/core.mjs";
 import { optimizeFloatingAllocation, runGameSimulation } from "../assets/game-simulation.mjs";
+import { indexesInsideSelection, normalizedSelectionRect } from "../assets/selection.mjs";
+
+test("selection rectangles normalize reverse drags", () => {
+  assert.deepEqual(normalizedSelectionRect(90, 70, 10, 20), {
+    left: 10,
+    top: 20,
+    right: 90,
+    bottom: 70,
+    width: 80,
+    height: 50,
+  });
+});
+
+test("box selection returns every intersecting card index", () => {
+  const selected = indexesInsideSelection(
+    { left: 10, top: 10, right: 90, bottom: 90 },
+    [
+      { left: 0, top: 0, right: 20, bottom: 20 },
+      { left: 30, top: 30, right: 60, bottom: 60 },
+      { left: 100, top: 100, right: 130, bottom: 130 },
+    ],
+  );
+  assert.deepEqual(selected, [0, 1]);
+});
 
 test("parseYdk only returns numeric lines between #main and #extra", () => {
   const ydk = [

@@ -8,6 +8,7 @@ import {
   simpleDeckHash,
   takeCardSelection,
 } from "/assets/core.mjs";
+import { indexesInsideSelection, normalizedSelectionRect } from "/assets/selection.mjs";
 
 const elements = {
   workspace: document.querySelector("#workspace"),
@@ -34,7 +35,9 @@ const elements = {
   deckFileName: document.querySelector("#deckFileName"),
   deckCount: document.querySelector("#deckCount"),
   uniqueCount: document.querySelector("#uniqueCount"),
+  deckPanel: document.querySelector(".deck-panel"),
   cardGrid: document.querySelector("#cardGrid"),
+  quickTargetStatus: document.querySelector("#quickTargetStatus"),
   customCardStrip: document.querySelector("#customCardStrip"),
   customCardList: document.querySelector("#customCardList"),
   addCustomCardButton: document.querySelector("#addCustomCardButton"),
@@ -137,6 +140,8 @@ const state = {
   gameWorker: null,
   gameMode: "direct",
   selectedToken: null,
+  selectedDeckIndices: new Set(),
+  activeQuickTarget: null,
   customCardDragged: false,
 };
 
@@ -254,6 +259,32 @@ function draggedCardToken(dataTransfer) {
 function setDraggedCardToken(dataTransfer, token) {
   const serialized = typeof token === "string" ? token : JSON.stringify(token);
   dataTransfer.setData("application/x-starter-card", serialized);
+  dataTransfer.setData("text/plain", serialized);
+}
+
+function draggedCardTokens(dataTransfer) {
+  if (!dataTransfer) return [];
+  const raw = dataTransfer.getData("application/x-starter-cards");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(normalizeCardToken).filter(Boolean);
+    } catch {
+      // Fall through to the legacy single-card payload.
+    }
+  }
+  const token = draggedCardToken(dataTransfer);
+  return token ? [token] : [];
+}
+
+function setDraggedCardTokens(dataTransfer, tokens) {
+  const normalized = tokens.map(normalizeCardToken).filter(Boolean);
+  if (normalized.length <= 1) {
+    if (normalized[0]) setDraggedCardToken(dataTransfer, normalized[0]);
+    return;
+  }
+  const serialized = JSON.stringify(normalized);
+  dataTransfer.setData("application/x-starter-cards", serialized);
   dataTransfer.setData("text/plain", serialized);
 }
 
@@ -563,12 +594,128 @@ function restoreCardGroups() {
   }
 }
 
+function clearDeckBoxSelection() {
+  state.selectedDeckIndices.clear();
+  elements.cardGrid
+    .querySelectorAll(".deck-card.is-box-selected")
+    .forEach((card) => card.classList.remove("is-box-selected"));
+}
+
 function clearSelectedCard() {
   state.selectedToken = null;
+  clearDeckBoxSelection();
   elements.cardGrid.querySelectorAll(".deck-card.is-selected").forEach((card) => card.classList.remove("is-selected"));
   elements.customCardList
     .querySelectorAll(".custom-card-item.is-selected")
     .forEach((card) => card.classList.remove("is-selected"));
+}
+
+function quickTargetKey(target) {
+  if (!target) return "";
+  if (target.kind === "group") return `group:${target.group}`;
+  if (target.kind === "combo") return `combo:${target.comboId}:${target.role}`;
+  return target.kind;
+}
+
+function quickTargetLabel(target) {
+  if (!target) return "";
+  if (target.kind === "custom-target") return "自訂卡片－改寫原卡";
+  if (target.kind === "custom-member") return "自訂卡片－成員／附加條件";
+  if (target.kind === "group") {
+    return {
+      judgment: "改變卡片判定",
+      floating: "浮動卡位",
+      goingFirst: "先手阻抗",
+      goingSecond: "後手對策",
+      brick: "卡組廢件",
+    }[target.group] || "卡位欄位";
+  }
+  if (target.kind === "combo") {
+    const comboIndex = state.combos.findIndex((combo) => combo.id === target.comboId);
+    const roleLabel = {
+      required: "手牌需求",
+      forbidden: "不可上手",
+      graveRequired: "墓地／除外結果需求",
+    }[target.role] || "條件";
+    return `啟動組合 ${comboIndex + 1}－${roleLabel}`;
+  }
+  return "欄位";
+}
+
+function quickTargetFromZone(zone) {
+  if (!zone) return null;
+  if (zone === elements.customEffectTargetDropzone) return { kind: "custom-target" };
+  if (zone === elements.customMemberDropzone) return { kind: "custom-member" };
+  if (zone.matches(".group-dropzone")) return { kind: "group", group: zone.dataset.group };
+  if (zone.matches(".dropzone")) {
+    return {
+      kind: "combo",
+      comboId: Number(zone.dataset.comboId),
+      role: zone.dataset.role,
+    };
+  }
+  return null;
+}
+
+function quickTargetZone(target = state.activeQuickTarget) {
+  if (!target) return null;
+  if (target.kind === "custom-target") return elements.customEffectTargetDropzone;
+  if (target.kind === "custom-member") return elements.customMemberDropzone;
+  if (target.kind === "group") {
+    return elements.cardGroups.querySelector(`.group-dropzone[data-group="${target.group}"]`);
+  }
+  if (target.kind === "combo") {
+    return elements.combosList.querySelector(
+      `.dropzone[data-combo-id="${target.comboId}"][data-role="${target.role}"]`,
+    );
+  }
+  return null;
+}
+
+function syncQuickTargetUi() {
+  document
+    .querySelectorAll(".group-dropzone.is-quick-target, .dropzone.is-quick-target, .custom-member-dropzone.is-quick-target, .custom-effect-target-dropzone.is-quick-target")
+    .forEach((zone) => {
+      zone.classList.remove("is-quick-target");
+      zone.removeAttribute("data-quick-target");
+      zone.setAttribute("aria-pressed", "false");
+    });
+
+  const zone = quickTargetZone();
+  if (state.activeQuickTarget && !zone) state.activeQuickTarget = null;
+  if (state.activeQuickTarget && zone) {
+    zone.classList.add("is-quick-target");
+    zone.dataset.quickTarget = "右鍵快速加入";
+    zone.setAttribute("aria-pressed", "true");
+  }
+
+  elements.quickTargetStatus.hidden = !state.activeQuickTarget;
+  elements.quickTargetStatus.textContent = state.activeQuickTarget
+    ? `快速欄位：${quickTargetLabel(state.activeQuickTarget)}`
+    : "";
+}
+
+function clearQuickTarget() {
+  state.activeQuickTarget = null;
+  syncQuickTargetUi();
+}
+
+function toggleQuickTarget(zone) {
+  const target = quickTargetFromZone(zone);
+  if (!target || !state.deck.length || zone.classList.contains("is-disabled")) return;
+  if (
+    (target.kind === "custom-target" && elements.customEffectFields.hidden) ||
+    (target.kind === "custom-member" && elements.customCardEditor.hidden)
+  ) return;
+
+  if (quickTargetKey(state.activeQuickTarget) === quickTargetKey(target)) {
+    clearQuickTarget();
+    showToast("已取消右鍵快速加入欄位。");
+    return;
+  }
+  state.activeQuickTarget = target;
+  syncQuickTargetUi();
+  showToast(`已選取「${quickTargetLabel(target)}」，在左側卡片按右鍵即可加入。`, "success");
 }
 
 function applyFloatingDeckState() {
@@ -588,6 +735,7 @@ function applyFloatingDeckState() {
 function renderDeck() {
   const hasDeck = state.deck.length > 0;
   state.selectedToken = null;
+  state.selectedDeckIndices.clear();
   elements.emptyDeck.hidden = hasDeck;
   elements.deckContent.hidden = !hasDeck;
   elements.customCardStrip.hidden = !hasDeck;
@@ -615,6 +763,7 @@ function renderDeck() {
     card.className = "deck-card";
     card.draggable = true;
     card.dataset.code = code;
+    card.dataset.deckIndex = String(index);
     card.tabIndex = 0;
     card.setAttribute("aria-label", `卡片 ${code}，可拖曳`);
     card.innerHTML = `
@@ -630,7 +779,72 @@ function renderDeck() {
   });
   elements.cardGrid.append(fragment);
   applyFloatingDeckState();
+  syncQuickTargetUi();
   updateCalculateState();
+}
+
+let deckBoxGesture = null;
+let deckBoxElement = null;
+let suppressDeckPanelClickUntil = 0;
+
+function updateDeckBoxSelection(clientX, clientY) {
+  if (!deckBoxGesture?.active || !deckBoxElement) return;
+  const rect = normalizedSelectionRect(deckBoxGesture.startX, deckBoxGesture.startY, clientX, clientY);
+  Object.assign(deckBoxElement.style, {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  });
+  const cards = [...elements.cardGrid.querySelectorAll(".deck-card")];
+  const selectedIndexes = new Set(indexesInsideSelection(rect, cards.map((card) => card.getBoundingClientRect())));
+  state.selectedDeckIndices.clear();
+  cards.forEach((card, index) => {
+    const selected = selectedIndexes.has(index);
+    card.classList.toggle("is-box-selected", selected);
+    if (selected) state.selectedDeckIndices.add(Number(card.dataset.deckIndex));
+  });
+}
+
+function beginDeckBoxSelection() {
+  if (!deckBoxGesture || deckBoxGesture.active) return;
+  deckBoxGesture.active = true;
+  clearSelectedCard();
+  deckBoxElement = document.createElement("div");
+  deckBoxElement.className = "deck-selection-box";
+  deckBoxElement.setAttribute("aria-hidden", "true");
+  document.body.append(deckBoxElement);
+  document.body.classList.add("is-box-selecting");
+  updateDeckBoxSelection(deckBoxGesture.startX, deckBoxGesture.startY);
+}
+
+function finishDeckBoxSelection(event) {
+  if (!deckBoxGesture || event.pointerId !== deckBoxGesture.pointerId) return;
+  window.clearTimeout(deckBoxGesture.timer);
+  if (deckBoxGesture.active) {
+    updateDeckBoxSelection(event.clientX, event.clientY);
+    suppressDeckPanelClickUntil = performance.now() + 600;
+    const selectedCount = state.selectedDeckIndices.size;
+    showToast(
+      selectedCount
+        ? `已框選 ${selectedCount} 張卡，可拖曳其中任一張來移動整組。`
+        : "框選範圍內沒有卡片。",
+      selectedCount ? "success" : "warning",
+    );
+  }
+  deckBoxElement?.remove();
+  deckBoxElement = null;
+  deckBoxGesture = null;
+  document.body.classList.remove("is-box-selecting");
+}
+
+function cancelDeckBoxSelection() {
+  if (!deckBoxGesture) return;
+  window.clearTimeout(deckBoxGesture.timer);
+  deckBoxElement?.remove();
+  deckBoxElement = null;
+  deckBoxGesture = null;
+  document.body.classList.remove("is-box-selecting");
 }
 
 function customStackMarkup(card) {
@@ -786,12 +1000,14 @@ function closeCustomCardEditor() {
   elements.customCardEditor.hidden = true;
   elements.addCustomCardButton.disabled = false;
   elements.customMemberDropzone.classList.remove("is-over");
+  if (["custom-member", "custom-target"].includes(state.activeQuickTarget?.kind)) clearQuickTarget();
 }
 
 function updateCustomEditorKind() {
   const kind = elements.customCardKindInput.value;
   const isEffect = ["draw", "mill"].includes(kind);
   elements.customEffectFields.hidden = !isEffect;
+  if (!isEffect && state.activeQuickTarget?.kind === "custom-target") clearQuickTarget();
   elements.customMemberHint.textContent = isEffect
     ? "原卡在所選位置公開時立即判定；附加條件可留空。若加入多項，則須在同一觸發位置全部成立；需要任一成立時可使用 OR 自訂卡。"
     : kind === "and"
@@ -799,29 +1015,31 @@ function updateCustomEditorKind() {
       : "拖入至少 2 個條件；任一條件於手牌成立即為 True。";
 }
 
-function addDraftMember(rawToken) {
+function addDraftMember(rawToken, { deferRender = false } = {}) {
   const token = normalizeCardToken(rawToken);
-  if (!token) return;
+  if (!token) return false;
   if (isSpecialEffectCard(token)) {
     showToast("特殊判定卡只能放入右側的「改變卡片判定」欄。", "warning");
-    return;
+    return false;
   }
   if (state.customDraftMembers.some((member) => cardTokenKey(member) === cardTokenKey(token))) {
     showToast(`「${cardTokenLabel(token)}」已在這張自訂卡片中。`, "warning");
-    return;
+    return false;
   }
   state.customDraftMembers.push(cloneCardToken(token));
-  renderCustomDraft();
+  if (!deferRender) renderCustomDraft();
+  return true;
 }
 
 function setCustomEffectTarget(rawToken) {
   const token = normalizeCardToken(rawToken);
   if (typeof token !== "string") {
     showToast("改變處理方式的卡必須是牌組中的單一正式卡。", "warning");
-    return;
+    return false;
   }
   state.customDraftTarget = token;
   renderCustomEffectTarget();
+  return true;
 }
 
 function saveCustomCard() {
@@ -1017,6 +1235,7 @@ function renderCardGroups() {
   }
   applyFloatingDeckState();
   updateFloatingDeckRangeSummary();
+  syncQuickTargetUi();
 }
 
 function miniCardsMarkup(cards, comboId, role) {
@@ -1059,6 +1278,7 @@ function renderCombos() {
         <small>載入牌組後，新增一組條件開始配置。</small>
       </div>
     `;
+    syncQuickTargetUi();
     updateCalculateState();
     return;
   }
@@ -1083,6 +1303,7 @@ function renderCombos() {
       },
     )
     .join("");
+  syncQuickTargetUi();
   updateCalculateState();
 }
 
@@ -1109,22 +1330,37 @@ function removeCombo(comboId) {
   invalidateResult();
 }
 
-function addCardToCombo(comboId, role, rawToken) {
+function addCardToCombo(comboId, role, rawToken, { deferRender = false } = {}) {
   const token = normalizeCardToken(rawToken);
   const combo = state.combos.find((item) => item.id === comboId);
   const allowedRoles = combo?.kind === "grave"
     ? ["graveRequired"]
     : ["required", "forbidden"];
-  if (!token || !combo || !allowedRoles.includes(role)) return;
+  if (!token || !combo || !allowedRoles.includes(role)) return false;
   if (isSpecialEffectCard(token)) {
     showToast("特殊判定卡只能放入「改變卡片判定」欄。", "warning");
-    return;
+    return false;
   }
   combo[role].push(cloneCardToken(token));
+  if (deferRender) return true;
   clearSelectedCard();
   saveCombos();
   renderCombos();
   invalidateResult();
+  return true;
+}
+
+function addCardsToCombo(comboId, role, tokens) {
+  let added = 0;
+  for (const token of tokens) {
+    if (addCardToCombo(comboId, role, token, { deferRender: true })) added += 1;
+  }
+  if (!added) return 0;
+  clearSelectedCard();
+  saveCombos();
+  renderCombos();
+  invalidateResult();
+  return added;
 }
 
 function removeCardFromCombo(comboId, role, index) {
@@ -1136,50 +1372,100 @@ function removeCardFromCombo(comboId, role, index) {
   invalidateResult();
 }
 
-function addCardToGroup(group, rawToken) {
+function addCardToGroup(group, rawToken, { deferRender = false } = {}) {
   const token = normalizeCardToken(rawToken);
-  if (!token || !["judgment", "floating", "goingFirst", "goingSecond", "brick"].includes(group)) return;
+  if (!token || !["judgment", "floating", "goingFirst", "goingSecond", "brick"].includes(group)) return false;
   if (group === "judgment") {
     if (!isConfiguredEffectCard(token)) {
       showToast("只有已設定原卡與改變條件的特殊判定卡可放入此欄。", "warning");
-      return;
+      return false;
     }
     if (state.cardGroups.judgment.some((item) => item.id === token.id)) {
       showToast(`「${token.name}」已啟用。`, "warning");
-      return;
+      return false;
     }
     state.cardGroups.judgment.push(cloneCardToken(token));
+    if (deferRender) return true;
     clearSelectedCard();
     saveCardGroups();
     renderCardGroups();
     invalidateResult();
     showToast(`已啟用「${token.name}」的卡片判定改寫。`, "success");
-    return;
+    return true;
   }
   if (isSpecialEffectCard(token)) {
     showToast("特殊判定卡只能放入「改變卡片判定」欄。", "warning");
-    return;
+    return false;
   }
   if (isCustomCardToken(token)) {
     if (state.cardGroups[group].some((item) => isCustomCardToken(item) && item.id === token.id)) {
       showToast(`「${token.name}」已加入該分類。`, "warning");
-      return;
+      return false;
     }
   } else {
     const copiesInDeck = state.deck.filter((item) => item === token).length;
     const copiesInGroup = state.cardGroups[group].filter((item) => item === token).length;
     if (copiesInGroup >= copiesInDeck) {
       showToast(`此牌組中的 ${token} 已全部加入該分類。`, "warning");
-      return;
+      return false;
     }
   }
 
   state.cardGroups[group].push(cloneCardToken(token));
+  if (deferRender) return true;
   clearSelectedCard();
   saveCardGroups();
   renderCardGroups();
   if (group === "floating") resetFloatingCountRange();
   invalidateResult();
+  return true;
+}
+
+function addCardsToGroup(group, tokens) {
+  let added = 0;
+  for (const token of tokens) {
+    if (addCardToGroup(group, token, { deferRender: true })) added += 1;
+  }
+  if (!added) return 0;
+  clearSelectedCard();
+  saveCardGroups();
+  renderCardGroups();
+  if (group === "floating") resetFloatingCountRange();
+  invalidateResult();
+  if (group === "judgment") showToast(`已啟用 ${added} 項卡片判定改寫。`, "success");
+  return added;
+}
+
+function addCardsToCustomDraft(tokens) {
+  let added = 0;
+  for (const token of tokens) {
+    if (addDraftMember(token, { deferRender: true })) added += 1;
+  }
+  if (added) renderCustomDraft();
+  return added;
+}
+
+function addCardsToTarget(target, tokens) {
+  if (!target || !tokens.length) return 0;
+  if (target.kind === "custom-target") {
+    if (tokens.length > 1) showToast("改寫原卡欄一次只接受一張卡，已使用框選中的第一張。", "warning");
+    return Number(setCustomEffectTarget(tokens[0]));
+  }
+  if (target.kind === "custom-member") return addCardsToCustomDraft(tokens);
+  if (target.kind === "group") return addCardsToGroup(target.group, tokens);
+  if (target.kind === "combo") return addCardsToCombo(target.comboId, target.role, tokens);
+  return 0;
+}
+
+function addCardToActiveQuickTarget(token) {
+  const target = state.activeQuickTarget;
+  if (!target || !quickTargetZone(target)) {
+    clearQuickTarget();
+    return false;
+  }
+  const added = addCardsToTarget(target, [token]);
+  if (added) showToast(`已將「${cardTokenLabel(token)}」加入「${quickTargetLabel(target)}」。`, "success");
+  return Boolean(added);
 }
 
 function removeCardFromGroup(group, index) {
@@ -1207,6 +1493,7 @@ async function handleDeckFile(file) {
 
   try {
     const cards = parseYdk(await file.text());
+    clearQuickTarget();
     state.deck = cards;
     state.deckName = file.name;
     state.deckKey = simpleDeckHash(cards);
@@ -1556,14 +1843,29 @@ for (const eventName of ["dragleave", "drop"]) {
 elements.uploadTarget.addEventListener("drop", (event) => handleDeckFile(event.dataTransfer?.files?.[0]));
 
 elements.cardGrid.addEventListener("dragstart", (event) => {
+  if (deckBoxGesture?.active) {
+    event.preventDefault();
+    return;
+  }
+  cancelDeckBoxSelection();
   const card = event.target.closest(".deck-card");
   if (!card || !event.dataTransfer) return;
+  const deckIndex = Number(card.dataset.deckIndex);
+  const isGroupDrag = state.selectedDeckIndices.size > 1 && state.selectedDeckIndices.has(deckIndex);
+  const tokens = isGroupDrag
+    ? [...state.selectedDeckIndices].sort((left, right) => left - right).map((index) => state.deck[index])
+    : [card.dataset.code];
   event.dataTransfer.effectAllowed = "copy";
-  setDraggedCardToken(event.dataTransfer, card.dataset.code);
-  card.classList.add("is-dragging");
+  setDraggedCardTokens(event.dataTransfer, tokens);
+  if (isGroupDrag) {
+    elements.cardGrid.querySelectorAll(".deck-card.is-box-selected").forEach((item) => item.classList.add("is-dragging"));
+  } else {
+    card.classList.add("is-dragging");
+  }
 });
-elements.cardGrid.addEventListener("dragend", (event) => {
-  event.target.closest(".deck-card")?.classList.remove("is-dragging");
+elements.cardGrid.addEventListener("dragend", () => {
+  elements.cardGrid.querySelectorAll(".deck-card.is-dragging").forEach((card) => card.classList.remove("is-dragging"));
+  clearDeckBoxSelection();
   document.querySelectorAll(".dropzone.is-over").forEach((zone) => zone.classList.remove("is-over"));
   document.querySelectorAll(".group-dropzone.is-over").forEach((zone) => zone.classList.remove("is-over"));
 });
@@ -1584,6 +1886,58 @@ elements.cardGrid.addEventListener("keydown", (event) => {
   if (!card) return;
   event.preventDefault();
   selectDeckCard(card);
+});
+elements.cardGrid.addEventListener("contextmenu", (event) => {
+  const card = event.target.closest(".deck-card");
+  if (!card || !state.activeQuickTarget) return;
+  event.preventDefault();
+  addCardToActiveQuickTarget(card.dataset.code);
+});
+
+elements.deckPanel.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || !state.deck.length) return;
+  cancelDeckBoxSelection();
+  deckBoxGesture = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+    timer: window.setTimeout(beginDeckBoxSelection, 320),
+  };
+});
+window.addEventListener("pointermove", (event) => {
+  if (!deckBoxGesture || event.pointerId !== deckBoxGesture.pointerId) return;
+  if (!deckBoxGesture.active) {
+    const distance = Math.hypot(event.clientX - deckBoxGesture.startX, event.clientY - deckBoxGesture.startY);
+    if (distance > 8) cancelDeckBoxSelection();
+    return;
+  }
+  event.preventDefault();
+  updateDeckBoxSelection(event.clientX, event.clientY);
+}, { passive: false });
+window.addEventListener("pointerup", finishDeckBoxSelection);
+window.addEventListener("pointercancel", (event) => {
+  if (!deckBoxGesture || event.pointerId !== deckBoxGesture.pointerId) return;
+  const wasActive = deckBoxGesture.active;
+  cancelDeckBoxSelection();
+  if (wasActive) clearDeckBoxSelection();
+});
+
+document.addEventListener("click", (event) => {
+  if (performance.now() < suppressDeckPanelClickUntil && event.target.closest(".deck-panel")) {
+    suppressDeckPanelClickUntil = 0;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}, true);
+
+document.addEventListener("click", (event) => {
+  const protectedTarget = event.target.closest(
+    "button, input, select, textarea, a, label, dialog, .deck-card, .custom-card-item, .custom-draft-card, .mini-card, .group-dropzone, .dropzone, .custom-member-dropzone, .custom-effect-target-dropzone, .quick-target-status, .toast",
+  );
+  if (protectedTarget) return;
+  if (state.selectedToken || state.selectedDeckIndices.size) clearSelectedCard();
+  if (state.activeQuickTarget) clearQuickTarget();
 });
 
 elements.addCustomCardButton.addEventListener("click", openCustomCardEditor);
@@ -1612,21 +1966,27 @@ elements.customEffectTargetDropzone.addEventListener("dragleave", (event) => {
 elements.customEffectTargetDropzone.addEventListener("drop", (event) => {
   event.preventDefault();
   elements.customEffectTargetDropzone.classList.remove("is-over");
-  const token = draggedCardToken(event.dataTransfer);
-  if (token) setCustomEffectTarget(token);
+  const tokens = draggedCardTokens(event.dataTransfer);
+  if (tokens.length) addCardsToTarget({ kind: "custom-target" }, tokens);
 });
 elements.customEffectTargetDropzone.addEventListener("click", (event) => {
   if (event.target.closest("#removeCustomEffectTarget")) return;
   if (state.selectedToken) {
     setCustomEffectTarget(state.selectedToken);
     clearSelectedCard();
+    return;
   }
+  toggleQuickTarget(elements.customEffectTargetDropzone);
 });
 elements.customEffectTargetDropzone.addEventListener("keydown", (event) => {
-  if ((event.key !== "Enter" && event.key !== " ") || !state.selectedToken) return;
+  if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
-  setCustomEffectTarget(state.selectedToken);
-  clearSelectedCard();
+  if (state.selectedToken) {
+    setCustomEffectTarget(state.selectedToken);
+    clearSelectedCard();
+  } else {
+    toggleQuickTarget(elements.customEffectTargetDropzone);
+  }
 });
 elements.customDraftMembers.addEventListener("click", (event) => {
   const button = event.target.closest("[data-draft-index]");
@@ -1650,19 +2010,27 @@ elements.customMemberDropzone.addEventListener("dragleave", (event) => {
 elements.customMemberDropzone.addEventListener("drop", (event) => {
   event.preventDefault();
   elements.customMemberDropzone.classList.remove("is-over");
-  const token = draggedCardToken(event.dataTransfer);
-  if (token) addDraftMember(token);
+  const tokens = draggedCardTokens(event.dataTransfer);
+  if (tokens.length) addCardsToCustomDraft(tokens);
 });
-elements.customMemberDropzone.addEventListener("click", () => {
-  if (typeof state.selectedToken !== "string") return;
-  addDraftMember(state.selectedToken);
-  clearSelectedCard();
+elements.customMemberDropzone.addEventListener("click", (event) => {
+  if (event.target.closest("[data-draft-index]")) return;
+  if (typeof state.selectedToken === "string") {
+    addDraftMember(state.selectedToken);
+    clearSelectedCard();
+    return;
+  }
+  toggleQuickTarget(elements.customMemberDropzone);
 });
 elements.customMemberDropzone.addEventListener("keydown", (event) => {
-  if ((event.key !== "Enter" && event.key !== " ") || typeof state.selectedToken !== "string") return;
+  if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
-  addDraftMember(state.selectedToken);
-  clearSelectedCard();
+  if (typeof state.selectedToken === "string") {
+    addDraftMember(state.selectedToken);
+    clearSelectedCard();
+  } else {
+    toggleQuickTarget(elements.customMemberDropzone);
+  }
 });
 
 function showCustomCardDetails(cardElement) {
@@ -1687,7 +2055,19 @@ elements.customCardList.addEventListener("keydown", (event) => {
   event.preventDefault();
   showCustomCardDetails(card);
 });
+elements.customCardList.addEventListener("contextmenu", (event) => {
+  const cardElement = event.target.closest(".custom-card-item");
+  const card = cardElement ? customCardById(cardElement.dataset.customId) : null;
+  if (!card || !state.activeQuickTarget) return;
+  event.preventDefault();
+  addCardToActiveQuickTarget(card);
+});
 elements.customCardList.addEventListener("dragstart", (event) => {
+  if (deckBoxGesture?.active) {
+    event.preventDefault();
+    return;
+  }
+  cancelDeckBoxSelection();
   const cardElement = event.target.closest(".custom-card-item");
   const card = cardElement ? customCardById(cardElement.dataset.customId) : null;
   if (!card || !event.dataTransfer) return;
@@ -1717,14 +2097,23 @@ elements.cardGroups.addEventListener("click", (event) => {
     return;
   }
   const zone = event.target.closest(".group-dropzone");
-  if (zone && state.selectedToken) addCardToGroup(zone.dataset.group, state.selectedToken);
+  if (!zone) return;
+  if (state.selectedToken) {
+    addCardToGroup(zone.dataset.group, state.selectedToken);
+  } else {
+    toggleQuickTarget(zone);
+  }
 });
 elements.cardGroups.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   const zone = event.target.closest(".group-dropzone");
-  if (!zone || !state.selectedToken) return;
+  if (!zone) return;
   event.preventDefault();
-  addCardToGroup(zone.dataset.group, state.selectedToken);
+  if (state.selectedToken) {
+    addCardToGroup(zone.dataset.group, state.selectedToken);
+  } else {
+    toggleQuickTarget(zone);
+  }
 });
 elements.cardGroups.addEventListener("dragover", (event) => {
   const zone = event.target.closest(".group-dropzone");
@@ -1744,8 +2133,8 @@ elements.cardGroups.addEventListener("drop", (event) => {
   if (!zone) return;
   event.preventDefault();
   zone.classList.remove("is-over");
-  const token = draggedCardToken(event.dataTransfer);
-  if (token) addCardToGroup(zone.dataset.group, token);
+  const tokens = draggedCardTokens(event.dataTransfer);
+  if (tokens.length) addCardsToGroup(zone.dataset.group, tokens);
 });
 
 elements.addComboButton.addEventListener("click", () => addCombo("hand"));
@@ -1766,16 +2155,23 @@ elements.combosList.addEventListener("click", (event) => {
     return;
   }
   const zone = event.target.closest(".dropzone");
-  if (zone && state.selectedToken) {
+  if (!zone) return;
+  if (state.selectedToken) {
     addCardToCombo(Number(zone.dataset.comboId), zone.dataset.role, state.selectedToken);
+  } else {
+    toggleQuickTarget(zone);
   }
 });
 elements.combosList.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   const zone = event.target.closest(".dropzone");
-  if (!zone || !state.selectedToken) return;
+  if (!zone) return;
   event.preventDefault();
-  addCardToCombo(Number(zone.dataset.comboId), zone.dataset.role, state.selectedToken);
+  if (state.selectedToken) {
+    addCardToCombo(Number(zone.dataset.comboId), zone.dataset.role, state.selectedToken);
+  } else {
+    toggleQuickTarget(zone);
+  }
 });
 elements.combosList.addEventListener("dragover", (event) => {
   const zone = event.target.closest(".dropzone");
@@ -1793,8 +2189,8 @@ elements.combosList.addEventListener("drop", (event) => {
   if (!zone) return;
   event.preventDefault();
   zone.classList.remove("is-over");
-  const token = draggedCardToken(event.dataTransfer);
-  if (token) addCardToCombo(Number(zone.dataset.comboId), zone.dataset.role, token);
+  const tokens = draggedCardTokens(event.dataTransfer);
+  if (tokens.length) addCardsToCombo(Number(zone.dataset.comboId), zone.dataset.role, tokens);
 });
 
 elements.calculateButton.addEventListener("click", runSimulation);

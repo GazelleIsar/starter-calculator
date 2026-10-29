@@ -60,7 +60,11 @@
 
         <div class="deck-content" id="deckContent" hidden>
           <div class="deck-toolbar">
-            <p><span class="legend-dot"></span>拖放卡片，或先點卡片再點右側欄位</p>
+            <div class="deck-toolbar-copy">
+              <p><span class="legend-dot"></span>拖曳卡片；點欄位後可右鍵快速加入</p>
+              <small>在主牌組構成框內任一處長按後拖曳，可框選多張卡片</small>
+              <span class="quick-target-status" id="quickTargetStatus" hidden></span>
+            </div>
             <button class="text-button" id="replaceDeckButton" type="button">更換 .ydk</button>
           </div>
           <div class="card-grid-scroll">

@@ -25,6 +25,7 @@ STATIC_FILES = {
     "/assets/styles.css": APP_DIR / "assets" / "styles.css",
     "/assets/app.mjs": APP_DIR / "assets" / "app.mjs",
     "/assets/core.mjs": APP_DIR / "assets" / "core.mjs",
+    "/assets/selection.mjs": APP_DIR / "assets" / "selection.mjs",
     "/assets/monte-carlo-worker.mjs": APP_DIR / "assets" / "monte-carlo-worker.mjs",
     "/assets/game-simulation.mjs": APP_DIR / "assets" / "game-simulation.mjs",
     "/assets/game-simulation-worker.mjs": APP_DIR / "assets" / "game-simulation-worker.mjs",
